@@ -271,8 +271,20 @@ def score_reseller(row):
 
     # Signal 6: Active listings (up to 5 points)
     max_listings = 568
-    listing_score = min(row['active_listings'] / max_listings * 5, 5)
+    listing_score = min(row["active_listings"] / max_listings * 5, 5)
     score += listing_score
+
+    # Signal 7: Combined monthly revenue estimate (up to 15 points)
+    # Aaron insight: a reseller selling 50 items at £65 each
+    # (£3,250/month) is worth more than one selling 200 items at
+    # £8 each (£1,600/month). Multiplying avg listing price by
+    # sales velocity gives a better proxy for actual monthly
+    # turnover than either metric alone.
+    avg_price = pd.to_numeric(row.get("avg_listing_price_gbp", 0), errors="coerce") or 0
+    combined_revenue = avg_price * row["sales_velocity_30d"]
+    max_combined = 65 * 213
+    revenue_score = min(combined_revenue / max_combined * 15, 15)
+    score += revenue_score
 
     return round(score, 2)
 
