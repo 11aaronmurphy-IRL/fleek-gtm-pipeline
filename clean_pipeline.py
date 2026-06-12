@@ -33,16 +33,16 @@ pipeline = pd.read_excel(
     dtype=str  # Read everything as text first, we'll convert later
 )
 
-day2 = pd.read_excel(
-    "Fleek_-_Acquisition_Case_Study_-_Pipeline_Data.xlsx",
-    sheet_name="new_drop_day2",
-    dtype=str
-)
+# Day 2 leads are intentionally NOT read here.
+# They are handled separately by batch_handler.py which
+# checks for duplicates before adding them to the pipeline.
+# This means the batch handler can properly simulate
+# receiving new leads the next day without everything
+# already being in the pipeline.
+df = pipeline.copy()
 
-# Stack the two tabs together. Day 2 leads go at the bottom.
-df = pd.concat([pipeline, day2], ignore_index=True)
-
-print(f"  Loaded {len(pipeline)} pipeline leads + {len(day2)} day-2 leads = {len(df)} total")
+print(f"  Loaded {len(df)} pipeline leads")
+print(f"  Note: day 2 leads handled separately by batch_handler.py")
 
 
 # ============================================================
