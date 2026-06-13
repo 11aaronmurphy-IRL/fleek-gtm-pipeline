@@ -270,6 +270,14 @@ def fallback_draft(lead, channel, stage, reply_type, objection_type,
         return {'message': message, 'next_action': 'Send content, set 30 day reminder',
                 'follow_up_date': '30_days', 'channel': channel}
 
+    # Hold stage — was previously marked Lost but had an unanswered message
+    # These were recovered by the stage reconciliation step in clean_pipeline.py
+    # Treat them like warm leads — acknowledge, send content, follow up
+    if stage == 'Hold':
+        message = f"{greeting}, following up on our previous conversation. I wanted to send over some info about Fleek in case the timing is better now. I would love to show you how it works — I have time Thursday at 2pm or Friday morning, does either work?"
+        return {'message': message, 'next_action': 'Send content, set 14 day reminder — previously marked Lost incorrectly',
+                'follow_up_date': '14_days', 'channel': channel}
+
     # New lead — first contact DM
     if stage == 'New' and channel == 'dm':
         message = f"Hey {handle or display_name}, came across your page and love what you are doing. We work with resellers like you to make sourcing vintage wholesale easier. Fleek gives you access to graded stock you can browse and order digitally, no more market trips. I'd love to show you. I have time Thursday or Friday morning, does either work?"
