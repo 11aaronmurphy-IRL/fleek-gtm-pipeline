@@ -231,7 +231,10 @@ print(f"  Cold replies (move to Lost): {cold}")
 
 DAILY_DM_LIMIT = 40
 
-# Exclude Won, Lost, and cold replies from today's list
+# Exclude Won, Lost, and cold replies from today's list.
+# Hold leads ARE included — they are not dead, just paused.
+# Aaron: nothing is dead unless they say a hard no.
+# Hold means soft no or timing issue — they can still be recovered.
 active_resellers = resellers[
     (~resellers['stage'].isin(['Won', 'Lost'])) &
     (resellers['reply_type'] != 'cold')
@@ -343,8 +346,9 @@ STAGE_PRIORITY = {
     'Replied': 3,
     'Contacted': 4,
     'New': 5,
-    'Lost': 6,
-    'Won': 7,
+    'Hold': 6,  # Hold = soft no or timing issue, follow up later
+    'Lost': 7,  # Lost = explicit hard no only
+    'Won': 8,
 }
 
 shops['stage_priority'] = shops['stage'].map(STAGE_PRIORITY).fillna(5)
