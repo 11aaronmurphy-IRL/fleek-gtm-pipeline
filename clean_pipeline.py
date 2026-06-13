@@ -292,7 +292,95 @@ print(f"  Lead types: {dict(type_counts)}")
 
 
 # ============================================================
-# STEP 9: SAVE THE CLEAN FILE
+# STEP 9: STAGE RECONCILIATION — ADDED AFTER TESTING
+# ============================================================
+# This step was added after a critical finding during testing.
+#
+# When the visual deal pipeline was built and the data loaded,
+# leads were spotted in the Lost column with Hot reply badges
+# on them. Clicking into them revealed last messages like:
+# "do you ship to EU" and "what brands do you carry" —
+# genuine buying signals, not dead leads.
+#
+# What had happened: previous BDRs had marked leads as Lost
+# without reading what the lead actually said last. The stage
+# label in the CRM did not reflect the reality of the conversation.
+#
+# The fix: cross-check every Lost lead against their last inbound
+# message. If the message contradicts the Lost stage, override it.
+#
+# The logic:
+# Lost + hot reply (buying signal) → override to Replied, flag
+# Lost + warm reply (objection/timing) → override to Hold, flag
+# Lost + no message OR explicit hard no → keep as Lost
+#
+# This means the tool catches commercial errors made by previous
+# reps, not just formatting errors in the data.
+
+HOT_SIGNALS = [
+    'how does', 'do you ship', 'what brands', 'can you do',
+    'how much', 'interested', 'send me', 'when can', 'yeah keen',
+    'sounds good', 'ok sounds', 'tell me more', 'how does it work',
+    'payout', 'commission', 'bundle', 'catalogue', 'catalog',
+    'call', 'chat', 'talk', 'demo', 'show me', 'more info'
+]
+
+HARD_NOS = [
+    'stop messaging', 'remove me', 'not for us ever',
+    'never', 'do not contact', 'unsubscribe'
+]
+
+def reconcile_stage(row):
+    stage = row['stage']
+    msg = str(row.get('last_inbound_text', '') or '').lower().strip()
+
+    # Only apply to Lost leads
+    if stage != 'Lost':
+        return stage, False
+
+    # No last message — keep as Lost
+    if not msg:
+        return 'Lost', False
+
+    # Explicit hard no — keep as Lost
+    if any(phrase in msg for phrase in HARD_NOS):
+        return 'Lost', False
+
+    # Hot signal — override to Replied
+    if any(phrase in msg for phrase in HOT_SIGNALS):
+        return 'Replied', True
+
+    # Has any message that is not a hard no — move to Hold
+    if len(msg) > 3:
+        return 'Hold', True
+
+    return 'Lost', False
+
+reconciliation_results = df.apply(
+    lambda row: reconcile_stage(row), axis=1
+)
+df['stage'] = [r[0] for r in reconciliation_results]
+df['stage_overridden'] = [r[1] for r in reconciliation_results]
+
+overridden = df[df['stage_overridden'] == True]
+hot_recovered = df[(df['stage_overridden'] == True) & (df['stage'] == 'Replied')]
+hold_recovered = df[(df['stage_overridden'] == True) & (df['stage'] == 'Hold')]
+
+if len(overridden) > 0:
+    print(f"\n⚠ Stage reconciliation found {len(overridden)} misclassified Lost leads:")
+    print(f"  {len(hot_recovered)} moved to Replied — had buying signals in last message")
+    print(f"  {len(hold_recovered)} moved to Hold — had unanswered messages, not hard nos")
+    print(f"  Combined est. monthly spend recovered: £{overridden['est_monthly_spend_gbp'].sum():,.0f}")
+    for _, lead in overridden.iterrows():
+        identifier = lead.get('handle') or lead.get('store_name') or lead.get('lead_id')
+        last_msg = str(lead.get("last_inbound_text",""))[:60]
+        print(f"    -> {identifier} | now: {lead["stage"]} | last said: {last_msg}")
+else:
+    print(f"\n✓ Stage reconciliation: no misclassified Lost leads found")
+
+
+# ============================================================
+# STEP 10: SAVE THE CLEAN FILE
 # ============================================================
 # We output a clean CSV file. CSV is a simple text format that
 # any tool can read. This becomes the input for every step
