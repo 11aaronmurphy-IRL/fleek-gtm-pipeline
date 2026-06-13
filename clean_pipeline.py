@@ -318,11 +318,17 @@ print(f"  Lead types: {dict(type_counts)}")
 # reps, not just formatting errors in the data.
 
 HOT_SIGNALS = [
+    # Direct buying signals
     'how does', 'do you ship', 'what brands', 'can you do',
     'how much', 'interested', 'send me', 'when can', 'yeah keen',
     'sounds good', 'ok sounds', 'tell me more', 'how does it work',
     'payout', 'commission', 'bundle', 'catalogue', 'catalog',
-    'call', 'chat', 'talk', 'demo', 'show me', 'more info'
+    'demo', 'show me', 'more info', 'call fri', 'happy to chat',
+    'pricing', 'ship to', 'fee structure', 'menswear', 'womenswear',
+    'minimum order', 'moq', 'delivery', 'returns', 'sample',
+    # Sceptical but engaged — they are considering it
+    'whats the catch', "what's the catch", 'what is the catch',
+    'sounds too good', 'tell me how',
 ]
 
 HARD_NOS = [
@@ -333,27 +339,62 @@ HARD_NOS = [
 def reconcile_stage(row):
     stage = row['stage']
     msg = str(row.get('last_inbound_text', '') or '').lower().strip()
+    num_touches = int(row.get('num_touches', 0) or 0)
+    spend = float(str(row.get('est_monthly_spend_gbp', 0) or 0).replace('£','').replace(',','') or 0)
 
     # Only apply to Lost leads
     if stage != 'Lost':
         return stage, False
 
-    # No last message — keep as Lost
-    if not msg:
-        return 'Lost', False
+    # -------------------------------------------------------
+    # CASE 1: Lead has a last message — cross check against it
+    # -------------------------------------------------------
+    if msg:
+        # Explicit hard no — keep as Lost
+        if any(phrase in msg for phrase in HARD_NOS):
+            return 'Lost', False
 
-    # Explicit hard no — keep as Lost
-    if any(phrase in msg for phrase in HARD_NOS):
-        return 'Lost', False
+        # Hot signal — buying signal in last message, override to Replied
+        # These were contacts marked Lost without reading what the lead said
+        if any(phrase in msg for phrase in HOT_SIGNALS):
+            return 'Replied', True
 
-    # Hot signal — override to Replied
-    if any(phrase in msg for phrase in HOT_SIGNALS):
-        return 'Replied', True
+        # Has a message that is not a hard no — move to Hold
+        # Sceptical, timing issue, objection — not dead, needs handling
+        if len(msg) > 3:
+            return 'Hold', True
 
-    # Has any message that is not a hard no — move to Hold
-    if len(msg) > 3:
+    # -------------------------------------------------------
+    # CASE 2: Blank last message — use other signals to decide
+    # -------------------------------------------------------
+    # Aaron's logic:
+    # A blank message on Lost is not automatically dead.
+    # We look at num_touches, last_touch_date and spend to decide.
+
+    # Never or barely contacted + high value = worth re-engaging
+    # Could be the rep never sent the message or they never saw it
+    if num_touches <= 1 and spend >= 3000:
         return 'Hold', True
 
+    # Contacted multiple times with no reply + high spend
+    # Last touch may have been months ago, circumstances change
+    if num_touches >= 2 and spend >= 5000:
+        # Check last touch date — if over 90 days ago worth one more attempt
+        last_touch = str(row.get('last_touch_date', '') or '')
+        if last_touch:
+            try:
+                import pandas as pd
+                days_since = (pd.Timestamp.now() - pd.to_datetime(last_touch)).days
+                if days_since > 90:
+                    return 'Hold', True
+            except:
+                pass
+
+    # Contacted 5+ times with no reply — genuinely lost for now
+    if num_touches >= 5:
+        return 'Lost', False
+
+    # Low value lead, multiple touches, no reply — keep Lost
     return 'Lost', False
 
 reconciliation_results = df.apply(
