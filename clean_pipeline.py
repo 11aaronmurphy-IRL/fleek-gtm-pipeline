@@ -343,6 +343,41 @@ def reconcile_stage(row):
     spend = float(str(row.get('est_monthly_spend_gbp', 0) or 0).replace('£','').replace(',','') or 0)
 
     # -------------------------------------------------------
+    # NEGOTIATING STAGE RECONCILIATION — ADDED AFTER TESTING
+    # -------------------------------------------------------
+    # Found during visual pipeline review: leads marked
+    # Negotiating with last messages like "Interested - send
+    # pricing" and "Send me more info". These are not in
+    # negotiation. They have not even seen pricing yet.
+    # Negotiating should mean active back and forth on terms,
+    # not just showing interest.
+    #
+    # The rule:
+    # Negotiating + last message suggests no info received yet
+    # → move back to Replied, they need follow up not closing
+    # Negotiating + genuinely discussing terms → keep
+    # -------------------------------------------------------
+
+    NOT_YET_NEGOTIATING = [
+        'send pricing', 'send me pricing', 'interested',
+        'send more info', 'send info', 'tell me more',
+        'more info', 'one-pager', 'onepager', 'what is it',
+        'how does it work', 'what do you do', 'send details',
+        'email me', 'send over', 'sounds interesting',
+        'sounds good', 'keen to know more', 'what brands',
+        'do you ship', 'how much', 'whats the catch',
+        'what is the catch', 'commission', 'payout',
+        'how does payout', 'fee structure'
+    ]
+
+    if stage == 'Negotiating':
+        if not msg:
+            return 'Negotiating', False
+        if any(phrase in msg for phrase in NOT_YET_NEGOTIATING):
+            return 'Replied', True
+        return 'Negotiating', False
+
+    # -------------------------------------------------------
     # WON STAGE RECONCILIATION — ADDED AFTER TESTING
     # -------------------------------------------------------
     # Critical finding during visual pipeline review:
