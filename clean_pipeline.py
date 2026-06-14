@@ -317,23 +317,57 @@ print(f"  Lead types: {dict(type_counts)}")
 # This means the tool catches commercial errors made by previous
 # reps, not just formatting errors in the data.
 
+# ============================================================
+# SIGNAL LISTS FOR STAGE RECONCILIATION
+# ============================================================
+# These lists power the reconciliation logic that cross-checks
+# every lead's stage label against what was actually said.
+# Built from real examples found in this pipeline during testing.
+
+# Meeting confirmed — specific time or visit agreed
+MEETING_SIGNALS = [
+    'sure, pop in', 'pop in on', 'pop in thursday', 'pop in friday',
+    'sure pop in', 'happy to chat', 'mornings best', 'morning best',
+    'afternoons best', 'afternoon best', 'call at', 'call on',
+    'confirmed', 'booked', 'see you', 'see you then',
+    'thursday works', 'friday works', 'monday works',
+    'tuesday works', 'wednesday works', 'works for me',
+    'that works', 'sounds good for', 'lets do', "let's do",
+    'ill be there', "i'll be there", 'we are free',
+]
+
+# Hot buying signals — need a response today
 HOT_SIGNALS = [
-    # Direct buying signals
+    # Questions about the product
     'how does', 'do you ship', 'what brands', 'can you do',
-    'how much', 'interested', 'send me', 'when can', 'yeah keen',
-    'sounds good', 'ok sounds', 'tell me more', 'how does it work',
-    'payout', 'commission', 'bundle', 'catalogue', 'catalog',
-    'demo', 'show me', 'more info', 'call fri', 'happy to chat',
-    'pricing', 'ship to', 'fee structure', 'menswear', 'womenswear',
-    'minimum order', 'moq', 'delivery', 'returns', 'sample',
-    # Sceptical but engaged — they are considering it
+    'how much', 'send me', 'when can', 'yeah keen',
+    'ok sounds good', 'when can we talk', 'tell me more',
+    'how does it work', 'payout', 'commission', 'bundle',
+    'catalogue', 'catalog', 'demo', 'show me', 'more info',
+    'call fri', 'pricing', 'ship to', 'fee structure',
+    'menswear', 'womenswear', 'minimum order', 'moq',
+    'delivery', 'returns', 'sample', 'interested',
+    # Sceptical but engaged
     'whats the catch', "what's the catch", 'what is the catch',
     'sounds too good', 'tell me how',
 ]
 
+# Hard nos — only these get marked Lost
 HARD_NOS = [
     'stop messaging', 'remove me', 'not for us ever',
-    'never', 'do not contact', 'unsubscribe'
+    'never contact', 'do not contact', 'unsubscribe',
+    'please stop', 'leave us alone',
+]
+
+# Warm signals — objection or timing, needs handling not closing
+WARM_SIGNALS = [
+    'already on another platform', 'another platform',
+    'already sell on vinted', 'sell on vinted',
+    'already on vinted', 'we use vinted',
+    'not interested right now', 'not right now',
+    'too busy', 'next month', 'try later',
+    'back next week', 'maybe later', 'slow season',
+    'need to think', 'maybe next month',
 ]
 
 def reconcile_stage(row):
@@ -342,141 +376,116 @@ def reconcile_stage(row):
     num_touches = int(row.get('num_touches', 0) or 0)
     spend = float(str(row.get('est_monthly_spend_gbp', 0) or 0).replace('£','').replace(',','') or 0)
 
-    # -------------------------------------------------------
-    # NEGOTIATING STAGE RECONCILIATION — ADDED AFTER TESTING
-    # -------------------------------------------------------
-    # Found during visual pipeline review: leads marked
-    # Negotiating with last messages like "Interested - send
-    # pricing" and "Send me more info". These are not in
-    # negotiation. They have not even seen pricing yet.
-    # Negotiating should mean active back and forth on terms,
-    # not just showing interest.
+    # ============================================================
+    # FULL STAGE RECONCILIATION — REBUILT AFTER PIPELINE REVIEW
+    # ============================================================
+    # The stage labels in the inherited pipeline cannot be trusted.
+    # Three stages were found to be systematically wrong:
     #
-    # The rule:
-    # Negotiating + last message suggests no info received yet
-    # → move back to Replied, they need follow up not closing
-    # Negotiating + genuinely discussing terms → keep
-    # -------------------------------------------------------
+    # NEGOTIATING: Leads marked Negotiating who had never even
+    # seen pricing. "Interested - send pricing" is not negotiating.
+    # Negotiating is now merged into Replied since there is no
+    # evidence of genuine term negotiation in this pipeline.
+    #
+    # WON: Leads marked Won with last messages like "whats your
+    # commission" and "yeah keen drop details". These are not
+    # closed deals. Previous BDRs marked Won prematurely.
+    #
+    # LOST: Leads marked Lost with active buying signals like
+    # "do you ship to EU" and "how much for the whole bundle".
+    # These are not dead leads, they are unanswered conversations.
+    #
+    # CONTACTED: Leads marked Contacted who had clearly replied
+    # with messages like "Happy to chat, mornings best." That
+    # is not just contacted, that is a meeting being booked.
+    #
+    # The new clean stage structure:
+    # New           — never contacted
+    # Contacted     — reached out, zero reply received
+    # Replied       — any reply received, hot or warm
+    # Meeting Booked — specific time or visit confirmed
+    # Won           — genuinely closed post reconciliation
+    # Hold          — soft no or timing issue, follow up later
+    # Lost          — hard no only, stop messaging
+    #
+    # Negotiating is absorbed into Replied.
+    # ============================================================
 
-    NOT_YET_NEGOTIATING = [
-        # Never seen pricing or info yet
-        'send pricing', 'send me pricing', 'interested',
-        'send more info', 'send info', 'tell me more',
-        'more info', 'one-pager', 'onepager', 'what is it',
-        'how does it work', 'what do you do', 'send details',
-        'email me', 'send over', 'sounds interesting',
-        'sounds good', 'keen to know more', 'what brands',
-        'do you ship', 'how much', 'whats the catch',
-        'what is the catch', 'commission', 'payout',
-        'how does payout', 'fee structure',
-        # Misunderstandings — need clarification not closing
-        'already sell on vinted', 'sell on vinted',
-        'already on vinted', 'we use vinted',
-        'already on another platform', 'another platform',
-        # Timing issues — not in active negotiation
-        'too busy', 'next month', 'try later', 'not right now',
-        'not interested right now', 'back next week',
-        'maybe later', 'slow season',
-    ]
+    # STEP 1: Check for meeting confirmation signals first
+    # These take priority over everything else
+    # "Sure, pop in on Thursday" and "Happy to chat, mornings best"
+    # are confirmed meetings regardless of what stage label says
+    if msg and any(phrase in msg for phrase in MEETING_SIGNALS):
+        return 'Meeting Booked', True
 
+    # STEP 2: Hard no — only these are truly Lost
+    if msg and any(phrase in msg for phrase in HARD_NOS):
+        return 'Lost', False
+
+    # STEP 3: Negotiating — merge into Replied
+    # There is no evidence of genuine negotiation in this pipeline
+    # Anyone in Negotiating either has a buying signal (Replied)
+    # or a warm/timing signal (Hold/Replied)
     if stage == 'Negotiating':
         if not msg:
-            return 'Negotiating', False
-        if any(phrase in msg for phrase in NOT_YET_NEGOTIATING):
             return 'Replied', True
-        return 'Negotiating', False
+        if any(phrase in msg for phrase in WARM_SIGNALS):
+            return 'Hold', True
+        return 'Replied', True
 
-    # -------------------------------------------------------
-    # WON STAGE RECONCILIATION — ADDED AFTER TESTING
-    # -------------------------------------------------------
-    # Critical finding during visual pipeline review:
-    # Several leads marked Won had last messages that showed
-    # the deal was nowhere near closed. Examples found:
-    # - "yeah keen, drop details" — just showed interest
-    # - "whats your commission?" — still asking basic questions
-    # - "how does payout work" — never even understood the product
-    # - "Interested - send pricing" — had not seen pricing yet
-    # - "Thanks, can you email a one-pager?" — wanted more info
-    #
-    # These were marked Won prematurely by previous BDRs.
-    # A Won lead should have NO outstanding questions.
-    # If the last message is a question or buying signal,
-    # the deal is not done — move it back to Replied.
-    #
-    # The rule:
-    # Won + last message is a question or signal → Replied
-    # Won + last message confirms deal or blank → keep Won
-    # -------------------------------------------------------
-
+    # STEP 4: Won — check if deal is actually closed
     if stage == 'Won':
         if not msg:
             return 'Won', False
-        # If they are still asking questions the deal is not closed
         if any(phrase in msg for phrase in HOT_SIGNALS):
             return 'Replied', True
-        # If they confirmed or thanked but asked for more info
-        follow_up_signals = ['email', 'one-pager', 'onepager', 'send over',
-                            'more info', 'details', 'pricing', 'price',
-                            'how does', 'what is', 'can you']
-        if any(phrase in msg for phrase in follow_up_signals):
+        follow_up = ['email', 'one-pager', 'send over', 'more info',
+                    'details', 'pricing', 'price', 'how does', 'can you']
+        if any(phrase in msg for phrase in follow_up):
             return 'Replied', True
-        # Genuine confirmation language — keep as Won
         return 'Won', False
 
-    # Only apply Lost reconciliation to Lost leads
-    if stage != 'Lost':
-        return stage, False
-
-    # -------------------------------------------------------
-    # CASE 1: Lead has a last message — cross check against it
-    # -------------------------------------------------------
-    if msg:
-        # Explicit hard no — keep as Lost
-        if any(phrase in msg for phrase in HARD_NOS):
+    # STEP 5: Lost — check if actually dead
+    if stage == 'Lost':
+        if not msg:
+            # Blank message on Lost — use touches and spend
+            if num_touches <= 1 and spend >= 3000:
+                return 'Hold', True
+            if num_touches >= 5:
+                return 'Lost', False
+            if spend >= 5000 and num_touches <= 4:
+                return 'Hold', True
             return 'Lost', False
-
-        # Hot signal — buying signal in last message, override to Replied
-        # These were contacts marked Lost without reading what the lead said
         if any(phrase in msg for phrase in HOT_SIGNALS):
             return 'Replied', True
-
-        # Has a message that is not a hard no — move to Hold
-        # Sceptical, timing issue, objection — not dead, needs handling
+        if any(phrase in msg for phrase in WARM_SIGNALS):
+            return 'Hold', True
         if len(msg) > 3:
             return 'Hold', True
-
-    # -------------------------------------------------------
-    # CASE 2: Blank last message — use other signals to decide
-    # -------------------------------------------------------
-    # Aaron's logic:
-    # A blank message on Lost is not automatically dead.
-    # We look at num_touches, last_touch_date and spend to decide.
-
-    # Never or barely contacted + high value = worth re-engaging
-    # Could be the rep never sent the message or they never saw it
-    if num_touches <= 1 and spend >= 3000:
-        return 'Hold', True
-
-    # Contacted multiple times with no reply + high spend
-    # Last touch may have been months ago, circumstances change
-    if num_touches >= 2 and spend >= 5000:
-        # Check last touch date — if over 90 days ago worth one more attempt
-        last_touch = str(row.get('last_touch_date', '') or '')
-        if last_touch:
-            try:
-                import pandas as pd
-                days_since = (pd.Timestamp.now() - pd.to_datetime(last_touch)).days
-                if days_since > 90:
-                    return 'Hold', True
-            except:
-                pass
-
-    # Contacted 5+ times with no reply — genuinely lost for now
-    if num_touches >= 5:
         return 'Lost', False
 
-    # Low value lead, multiple touches, no reply — keep Lost
-    return 'Lost', False
+    # STEP 6: Contacted — check if they actually replied
+    if stage == 'Contacted':
+        if not msg:
+            return 'Contacted', False
+        if any(phrase in msg for phrase in HOT_SIGNALS):
+            return 'Replied', True
+        if any(phrase in msg for phrase in WARM_SIGNALS):
+            return 'Hold', True
+        if len(msg) > 3:
+            return 'Replied', True
+        return 'Contacted', False
+
+    # STEP 7: Hold — check if actually a hot signal hiding in there
+    if stage == 'Hold':
+        if not msg:
+            return 'Hold', False
+        if any(phrase in msg for phrase in HOT_SIGNALS):
+            return 'Replied', True
+        return 'Hold', False
+
+    # All other stages — keep as is
+    return stage, False
 
 reconciliation_results = df.apply(
     lambda row: reconcile_stage(row), axis=1
