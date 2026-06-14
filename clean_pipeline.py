@@ -359,6 +359,7 @@ def reconcile_stage(row):
     # -------------------------------------------------------
 
     NOT_YET_NEGOTIATING = [
+        # Never seen pricing or info yet
         'send pricing', 'send me pricing', 'interested',
         'send more info', 'send info', 'tell me more',
         'more info', 'one-pager', 'onepager', 'what is it',
@@ -367,7 +368,15 @@ def reconcile_stage(row):
         'sounds good', 'keen to know more', 'what brands',
         'do you ship', 'how much', 'whats the catch',
         'what is the catch', 'commission', 'payout',
-        'how does payout', 'fee structure'
+        'how does payout', 'fee structure',
+        # Misunderstandings — need clarification not closing
+        'already sell on vinted', 'sell on vinted',
+        'already on vinted', 'we use vinted',
+        'already on another platform', 'another platform',
+        # Timing issues — not in active negotiation
+        'too busy', 'next month', 'try later', 'not right now',
+        'not interested right now', 'back next week',
+        'maybe later', 'slow season',
     ]
 
     if stage == 'Negotiating':
