@@ -324,50 +324,124 @@ print(f"  Lead types: {dict(type_counts)}")
 # every lead's stage label against what was actually said.
 # Built from real examples found in this pipeline during testing.
 
-# Meeting confirmed — specific time or visit agreed
+# ============================================================
+# SIGNAL LISTS — BUILT FROM ACTUAL MESSAGES IN THIS PIPELINE
+# ============================================================
+# Every unique last_inbound_text was reviewed manually.
+# Each message is assigned to exactly one category.
+# These lists must be tight — wrong classification wastes
+# DM limit or misses a hot lead entirely.
+
+# MEETING BOOKED — specific time or visit explicitly confirmed
+# Only add to this list if a day, time or clear commitment exists
+# "can you do a call fri?" is a REQUEST not a confirmation → HOT
+# "Happy to chat" alone is not confirmed → needs a time → HOT
 MEETING_SIGNALS = [
-    'sure, pop in', 'pop in on', 'pop in thursday', 'pop in friday',
-    'sure pop in', 'happy to chat', 'mornings best', 'morning best',
-    'afternoons best', 'afternoon best', 'call at', 'call on',
-    'confirmed', 'booked', 'see you', 'see you then',
-    'thursday works', 'friday works', 'monday works',
-    'tuesday works', 'wednesday works', 'works for me',
-    'that works', 'sounds good for', 'lets do', "let's do",
-    'ill be there', "i'll be there", 'we are free',
+    'sure, pop in on thursday',
+    'sure, pop in on friday',
+    'sure, pop in',
+    'pop in on thursday',
+    'pop in on friday',
+    'happy to chat, mornings best',
+    'happy to chat, afternoons best',
+    'mornings best',
+    'afternoons best',
+    'owner is back next week, call then',
+    'call then',
+    # They are requesting a call — treat as meeting booked
+    'can you do a call fri',
+    'can you do a call',
 ]
 
-# Hot buying signals — need a response today
+# HOT SIGNALS — buying signal or open question, respond today
+# These are leads that have shown real interest or asked a
+# specific question. Every one of these needs a reply today.
+# Based on actual messages found in this pipeline:
 HOT_SIGNALS = [
-    # Questions about the product
-    'how does', 'do you ship', 'what brands', 'can you do',
-    'how much', 'send me', 'when can', 'yeah keen',
-    'ok sounds good', 'when can we talk', 'tell me more',
-    'how does it work', 'payout', 'commission', 'bundle',
-    'catalogue', 'catalog', 'demo', 'show me', 'more info',
-    'call fri', 'pricing', 'ship to', 'fee structure',
-    'menswear', 'womenswear', 'minimum order', 'moq',
-    'delivery', 'returns', 'sample', 'interested',
-    # Sceptical but engaged
-    'whats the catch', "what's the catch", 'what is the catch',
-    'sounds too good', 'tell me how',
+    # Direct buying interest
+    'yeah keen, drop details',
+    'yeah keen',
+    'ok sounds good when can we talk',
+    'ok sounds good',
+    'send me the bundle list',
+    'bundle list',
+    # Questions about the product — they are evaluating
+    'do you ship to eu',
+    'do you ship',
+    'do you take menswear',
+    'what brands do you take',
+    'what brands',
+    'how does payout work',
+    'how much for the whole bundle',
+    'how much',
+    "what's the fee structure",
+    'fee structure',
+    'whats your commission',
+    'commission',
+    'payout',
+    # Sceptical but engaged — asking means considering
+    'whats the catch',
+    "what's the catch",
+    'what is the catch',
+    # Interested with a timing caveat — still hot
+    'interested but busy this week',
+    'interested - send pricing',
+    'interested',
+    # Call requests — they are initiating a meeting
+    'when can we talk',
+    # Other buying signals
+    'send me', 'bundle', 'catalogue', 'catalog',
+    'how does it work', 'menswear', 'womenswear',
+    'minimum order', 'moq', 'sample', 'demo',
 ]
 
-# Hard nos — only these get marked Lost
+# HARD NOS — only these get marked Lost
+# Everything else is Hold or Replied
 HARD_NOS = [
-    'stop messaging', 'remove me', 'not for us ever',
-    'never contact', 'do not contact', 'unsubscribe',
-    'please stop', 'leave us alone',
+    'stop messaging',
+    'remove me',
+    'not for us ever',
+    'never contact',
+    'do not contact',
+    'unsubscribe',
+    'please stop',
+    'leave us alone',
 ]
 
-# Warm signals — objection or timing, needs handling not closing
+# WARM/HOLD SIGNALS — objection or timing, needs handling
+# These are NOT dead. They need a specific response.
+# Platform objection → clarify Fleek is for sourcing not selling
+# Timing → acknowledge, send content, set reminder
 WARM_SIGNALS = [
-    'already on another platform', 'another platform',
-    'already sell on vinted', 'sell on vinted',
-    'already on vinted', 'we use vinted',
-    'not interested right now', 'not right now',
-    'too busy', 'next month', 'try later',
-    'back next week', 'maybe later', 'slow season',
-    'need to think', 'maybe next month',
+    # Misunderstandings about what Fleek is
+    'we already sell on vinted',
+    'already sell on vinted',
+    'sell on vinted',
+    'already on vinted',
+    'we use vinted',
+    # Platform objections
+    'already on another platform',
+    'another platform',
+    'not taking on new channels',
+    # Timing issues
+    'not interested right now',
+    'not right now',
+    'too busy this season',
+    'too busy',
+    'next month',
+    'try later',
+    'maybe next month',
+    'maybe later',
+    'slow season',
+    # Undecided
+    'need to think about it',
+    'need to think',
+    # Wants info before deciding — not a meeting, needs follow up
+    'thanks, can you email a one-pager',
+    'can you email a one-pager',
+    'one-pager',
+    'send more info',
+    'email me',
 ]
 
 def reconcile_stage(row):
