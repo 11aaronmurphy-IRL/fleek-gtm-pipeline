@@ -342,7 +342,44 @@ def reconcile_stage(row):
     num_touches = int(row.get('num_touches', 0) or 0)
     spend = float(str(row.get('est_monthly_spend_gbp', 0) or 0).replace('£','').replace(',','') or 0)
 
-    # Only apply to Lost leads
+    # -------------------------------------------------------
+    # WON STAGE RECONCILIATION — ADDED AFTER TESTING
+    # -------------------------------------------------------
+    # Critical finding during visual pipeline review:
+    # Several leads marked Won had last messages that showed
+    # the deal was nowhere near closed. Examples found:
+    # - "yeah keen, drop details" — just showed interest
+    # - "whats your commission?" — still asking basic questions
+    # - "how does payout work" — never even understood the product
+    # - "Interested - send pricing" — had not seen pricing yet
+    # - "Thanks, can you email a one-pager?" — wanted more info
+    #
+    # These were marked Won prematurely by previous BDRs.
+    # A Won lead should have NO outstanding questions.
+    # If the last message is a question or buying signal,
+    # the deal is not done — move it back to Replied.
+    #
+    # The rule:
+    # Won + last message is a question or signal → Replied
+    # Won + last message confirms deal or blank → keep Won
+    # -------------------------------------------------------
+
+    if stage == 'Won':
+        if not msg:
+            return 'Won', False
+        # If they are still asking questions the deal is not closed
+        if any(phrase in msg for phrase in HOT_SIGNALS):
+            return 'Replied', True
+        # If they confirmed or thanked but asked for more info
+        follow_up_signals = ['email', 'one-pager', 'onepager', 'send over',
+                            'more info', 'details', 'pricing', 'price',
+                            'how does', 'what is', 'can you']
+        if any(phrase in msg for phrase in follow_up_signals):
+            return 'Replied', True
+        # Genuine confirmation language — keep as Won
+        return 'Won', False
+
+    # Only apply Lost reconciliation to Lost leads
     if stage != 'Lost':
         return stage, False
 
@@ -408,14 +445,16 @@ hot_recovered = df[(df['stage_overridden'] == True) & (df['stage'] == 'Replied')
 hold_recovered = df[(df['stage_overridden'] == True) & (df['stage'] == 'Hold')]
 
 if len(overridden) > 0:
-    print(f"\n⚠ Stage reconciliation found {len(overridden)} misclassified Lost leads:")
-    print(f"  {len(hot_recovered)} moved to Replied — had buying signals in last message")
+    print(f"\n⚠ Stage reconciliation found {len(overridden)} misclassified leads:")
+    print(f"  {len(hot_recovered)} moved to Replied — had buying signals or open questions")
     print(f"  {len(hold_recovered)} moved to Hold — had unanswered messages, not hard nos")
     print(f"  Combined est. monthly spend recovered: £{overridden['est_monthly_spend_gbp'].sum():,.0f}")
+    print(f"  Note: includes Won leads marked closed before the deal was actually done")
     for _, lead in overridden.iterrows():
         identifier = lead.get('handle') or lead.get('store_name') or lead.get('lead_id')
         last_msg = str(lead.get("last_inbound_text",""))[:60]
-        print(f"    -> {identifier} | now: {lead["stage"]} | last said: {last_msg}")
+        stage_now = lead["stage"]
+        print(f"    -> {identifier} | now: {stage_now} | last said: {last_msg}")
 else:
     print(f"\n✓ Stage reconciliation: no misclassified Lost leads found")
 
