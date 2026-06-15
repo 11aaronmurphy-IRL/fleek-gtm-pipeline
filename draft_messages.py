@@ -1,5 +1,5 @@
 """
-FLEEK PIPELINE — STEP 3: MESSAGE DRAFTING
+FLEEK PIPELINE, STEP 3: MESSAGE DRAFTING
 ==========================================
 This script reads today's prioritised leads from Step 2 and
 drafts the actual outreach message for each one.
@@ -14,32 +14,32 @@ AARON'S COMMERCIAL LOGIC (baked into every message):
 Never give up on a lead unless they explicitly say hard no.
 Every reply type gets a specific response:
 
-BUYING SIGNAL — book a call today with specific times offered
+BUYING SIGNAL, book a call today with specific times offered
   "yeah keen", "ok sounds good", "when can we talk"
   → Respond immediately, offer two specific times, binary choice
 
-QUESTION — answer it directly then book a call
+QUESTION, answer it directly then book a call
   "how does payout work", "what brands do you take"
   → Answer the specific question, then offer specific times
 
-MISUNDERSTANDING — clarify then book a call
+MISUNDERSTANDING, clarify then book a call
   "We already sell on Vinted"
   → Clarify Fleek is for sourcing not selling, then book a call
 
-PLATFORM OBJECTION — handle with differentiation then book
+PLATFORM OBJECTION, handle with differentiation then book
   "already on another platform"
   → Most customers use multiple platforms, Fleek has stock
     you cannot get anywhere else. Then offer specific times.
 
-TIMING ISSUE — send content, set reminder, follow up later
+TIMING ISSUE, send content, set reminder, follow up later
   "Too busy this season", "maybe next month"
   → Acknowledge, send info, set follow up reminder
 
-SOFT NO — send content, set 30 day reminder
+SOFT NO, send content, set 30 day reminder
   "not interested right now"
   → No pressure, send content, check back in 30 days
 
-HARD NO — mark as Lost, no further contact
+HARD NO, mark as Lost, no further contact
   "stop messaging me", "remove me from your list"
   → Only these get marked Lost. Nothing else.
 
@@ -52,11 +52,11 @@ HOW TO RUN:
     python draft_messages.py
 
 INPUT:
-    todays_resellers.csv — top 40 resellers from Step 2
-    todays_shops.csv     — sequenced shops from Step 2
+    todays_resellers.csv, top 40 resellers from Step 2
+    todays_shops.csv    , sequenced shops from Step 2
 
 OUTPUT:
-    todays_messages.csv  — every lead with a drafted message
+    todays_messages.csv , every lead with a drafted message
                            and recommended next action
 """
 
@@ -87,16 +87,16 @@ warnings.filterwarnings('ignore')
 # ============================================================
 # The 40 DM daily cap on Instagram is a hard constraint.
 # The goal of every DM is to migrate the conversation to an
-# unlimited channel — email or WhatsApp — as fast as possible.
+# unlimited channel, email or WhatsApp, as fast as possible.
 #
 # TWO MESSAGE CATEGORIES:
 #
-# CATEGORY 1 — Cold/New/Amber leads (no reply yet)
+# CATEGORY 1, Cold/New/Amber leads (no reply yet)
 # Goal: get a response. Hook them with something specific
 # about their account. Do NOT ask for WhatsApp or email on
-# first touch — looks automated and kills trust.
+# first touch, looks automated and kills trust.
 #
-# CATEGORY 2 — Hot/Warm replies (active conversations)
+# CATEGORY 2, Hot/Warm replies (active conversations)
 # Goal: answer their question directly, then immediately
 # migrate the conversation to email or WhatsApp.
 #
@@ -111,14 +111,14 @@ SYSTEM_PROMPT = """You are drafting outreach messages for Fleek, a B2B wholesale
 CHANNEL MIGRATION STRATEGY:
 The Instagram DM limit is 40 per day. Every message must work toward moving the conversation to email or WhatsApp (unlimited channels) as fast as possible.
 
-CATEGORY 1 — Cold outreach (reply_type is new or amber, no previous reply):
+CATEGORY 1, Cold outreach (reply_type is new or amber, no previous reply):
 - Lead with a high-value hook specific to their account
 - Mention something real about their curation, volume or niche
-- Do NOT ask for WhatsApp or email on first touch — looks like a bot
+- Do NOT ask for WhatsApp or email on first touch, looks like a bot
 - End with a soft question that invites a reply
 - Under 60 words, casual, sounds like a real person
 
-CATEGORY 2 — Active conversation (reply_type is hot or warm):
+CATEGORY 2, Active conversation (reply_type is hot or warm):
 - Read their last message carefully
 - Answer their specific question directly and completely
 - Immediately append channel migration CTA
@@ -172,14 +172,14 @@ def draft_message(lead, channel='dm'):
     # Skip hard nos
     if reply_type == 'cold':
         return {
-            'message': 'SKIP — hard no, mark as Lost',
+            'message': 'SKIP, hard no, mark as Lost',
             'next_action': 'Mark as Lost, no further contact',
             'follow_up_date': 'never',
             'channel': channel
         }
 
     # -------------------------------------------------------
-    # CONTACT DATA CHECK — IF/ELSE for channel migration
+    # CONTACT DATA CHECK, IF/ELSE for channel migration
     # -------------------------------------------------------
     # If we already have their email or phone, skip asking
     # for it. Instead tell them we proactively sent the info
@@ -208,9 +208,9 @@ def draft_message(lead, channel='dm'):
 
     # Determine message category
     if reply_type in ['hot', 'warm']:
-        category = "CATEGORY 2 — Active conversation. Answer their question directly, then migrate to unlimited channel."
+        category = "CATEGORY 2, Active conversation. Answer their question directly, then migrate to unlimited channel."
     else:
-        category = "CATEGORY 1 — Cold outreach. High-value hook specific to their account. No contact request on first touch."
+        category = "CATEGORY 1, Cold outreach. High-value hook specific to their account. No contact request on first touch."
 
     # Build the prompt
     if channel == 'dm':
@@ -269,7 +269,7 @@ Return ONLY a JSON object:
     except Exception as e:
         pass
 
-    # Fallback if API fails — use rule based drafting
+    # Fallback if API fails, use rule based drafting
     return fallback_draft(lead, channel, stage, reply_type,
                          objection_type, last_message, name,
                          handle, store_name, city)
@@ -304,7 +304,7 @@ def fallback_draft(lead, channel, stage, reply_type, objection_type,
         has_contact = False
 
     # -------------------------------------------------------
-    # CATEGORY 1 — Cold outreach (new or amber, no reply yet)
+    # CATEGORY 1, Cold outreach (new or amber, no reply yet)
     # High value hook. No contact request on first touch.
     # -------------------------------------------------------
     if reply_type in ['new', 'amber', 'none']:
@@ -318,7 +318,7 @@ def fallback_draft(lead, channel, stage, reply_type, objection_type,
                 hook = "love the volume you are moving"
             else:
                 hook = "love what you are doing with your page"
-            message = f"{greeting}, {hook}. We work with resellers like you to make sourcing vintage wholesale easier — graded stock, no market trips, exclusive drops you cannot get elsewhere. Worth a quick look?"
+            message = f"{greeting}, {hook}. We work with resellers like you to make sourcing vintage wholesale easier, graded stock, no market trips, exclusive drops you cannot get elsewhere. Worth a quick look?"
             return {'message': message, 'next_action': 'Wait for reply, follow up in 7 days',
                     'follow_up_date': '7_days', 'channel': channel}
         else:
@@ -328,32 +328,32 @@ def fallback_draft(lead, channel, stage, reply_type, objection_type,
                     'follow_up_date': '7_days', 'channel': channel}
 
     # -------------------------------------------------------
-    # CATEGORY 2 — Active conversations (hot or warm replies)
+    # CATEGORY 2, Active conversations (hot or warm replies)
     # Answer their question, then migrate to unlimited channel.
     # -------------------------------------------------------
 
     # Hard no
     if reply_type == 'cold':
-        return {'message': 'SKIP — hard no, mark as Lost',
+        return {'message': 'SKIP, hard no, mark as Lost',
                 'next_action': 'Mark as Lost, no further contact',
                 'follow_up_date': 'never', 'channel': channel}
 
     # Payout or commission question
     if 'payout' in msg or 'commission' in msg or 'fee structure' in msg:
         if has_contact:
-            message = f"{greeting}, great question — everything is included in the listing price, no hidden fees, BNPL up to 45 days with no interest. {migration_line}"
+            message = f"{greeting}, great question, everything is included in the listing price, no hidden fees, BNPL up to 45 days with no interest. {migration_line}"
         else:
-            message = f"{greeting}, great question — everything is included in the listing price, no hidden fees, BNPL up to 45 days no interest. {migration_line}"
+            message = f"{greeting}, great question, everything is included in the listing price, no hidden fees, BNPL up to 45 days no interest. {migration_line}"
         return {'message': message, 'next_action': 'Send price sheet to contact details',
                 'follow_up_date': 'today', 'channel': channel}
 
     # EU shipping question
     if 'ship' in msg or 'eu' in msg:
         if has_contact:
-            message = f"{greeting}, yes we ship to EU — duties and taxes all included in the listing price, no surprises on delivery. Sending the full EU shipping breakdown to {existing_email or existing_phone} now."
+            message = f"{greeting}, yes we ship to EU, duties and taxes all included in the listing price, no surprises on delivery. Would love to walk you through more on a quick call, would you have 10 minutes this week? I can send the full shipping breakdown to {existing_email or existing_phone} beforehand."
         else:
-            message = f"{greeting}, yes we ship to EU — duties and taxes all included in the listing price, no surprises. {migration_line}"
-        return {'message': message, 'next_action': 'Send EU shipping info',
+            message = f"{greeting}, yes we ship to EU, duties and taxes all included in the listing price, no surprises on delivery. Would love to walk you through more on a quick call, would you have 10 minutes this week?"
+        return {'message': message, 'next_action': 'Book a call, EU shipping answered',
                 'follow_up_date': 'today', 'channel': channel}
 
     # Brands question
@@ -368,7 +368,7 @@ def fallback_draft(lead, channel, stage, reply_type, objection_type,
     # Bundle or catalogue request
     if 'bundle' in msg or 'catalogue' in msg or 'send me' in msg:
         if has_contact:
-            message = f"{greeting}, on it — sending the bundle list and wholesale catalogue straight to {existing_email or existing_phone} now."
+            message = f"{greeting}, on it, sending the bundle list and wholesale catalogue straight to {existing_email or existing_phone} now."
         else:
             message = f"{greeting}, absolutely. {migration_line} I'll get the bundle list sent straight over."
         return {'message': message, 'next_action': 'Send bundle list',
@@ -377,22 +377,22 @@ def fallback_draft(lead, channel, stage, reply_type, objection_type,
     # Buying signal
     if reply_type == 'hot':
         if has_contact:
-            message = f"{greeting}, great to hear it. Getting our wholesale info sent straight to {existing_email or existing_phone} now — take a look and let me know when works for a call."
+            message = f"{greeting}, great to hear it. Getting our wholesale info sent straight to {existing_email or existing_phone} now, take a look and let me know when works for a call."
         else:
-            message = f"{greeting}, great to hear it. {migration_line} Once you have got our info I can walk you through the rest on a call — Thursday at 2pm or Friday morning work?"
+            message = f"{greeting}, great to hear it. {migration_line} Once you have got our info I can walk you through the rest on a call, Thursday at 2pm or Friday morning work?"
         return {'message': message, 'next_action': 'Send info, book call',
                 'follow_up_date': 'today', 'channel': channel}
 
-    # Misunderstanding — Vinted
+    # Misunderstanding, Vinted
     if 'vinted' in msg or 'sell on' in msg:
-        message = f"{greeting}, great to hear you are on Vinted — Fleek is actually the other side of that. It is where you source the stock you sell on Vinted. Most of our sellers use both. {migration_line}"
+        message = f"{greeting}, great to hear you are on Vinted, Fleek is actually the other side of that. It is where you source the stock you sell on Vinted. Most of our sellers use both. {migration_line}"
         return {'message': message, 'next_action': 'Send info, clarification sent',
                 'follow_up_date': 'today', 'channel': channel}
 
     # Platform objection
     if 'another platform' in msg or 'already on' in msg:
-        message = f"{greeting}, totally get that. Where Fleek stands apart is the stock itself — graded vintage wholesale you cannot source anywhere else, with FleekSort categorising every item before it arrives. Would love to show you what is coming through. Would you have a quick 10 minutes for a call this week?"
-        return {'message': message, 'next_action': 'Book a call — objection handled with differentiation',
+        message = f"{greeting}, totally get that. Where Fleek stands apart is the stock itself, graded vintage wholesale you cannot source anywhere else, with FleekSort categorising every item before it arrives. Would love to show you what is coming through. Would you have a quick 10 minutes for a call this week?"
+        return {'message': message, 'next_action': 'Book a call, objection handled with differentiation',
                 'follow_up_date': 'today', 'channel': channel}
 
     # Timing objection
@@ -407,14 +407,14 @@ def fallback_draft(lead, channel, stage, reply_type, objection_type,
         return {'message': message, 'next_action': 'Send content, set 30 day reminder',
                 'follow_up_date': '30_days', 'channel': channel}
 
-    # Hold stage — recovered from Lost, re-engagement
+    # Hold stage, recovered from Lost, re-engagement
     if stage == 'Hold':
         message = f"{greeting}, following up as promised. I wanted to send over some info about Fleek in case the timing is better now. {migration_line}"
         return {'message': message, 'next_action': 'Send info, 14 day reminder',
                 'follow_up_date': '14_days', 'channel': channel}
 
     # Default warm follow up
-    message = f"{greeting}, just following up. {migration_line} Happy to walk you through everything on a quick call — Thursday at 2pm or Friday morning?"
+    message = f"{greeting}, just following up. {migration_line} Happy to walk you through everything on a quick call, Thursday at 2pm or Friday morning?"
     return {'message': message, 'next_action': 'Wait for reply',
             'follow_up_date': '7_days', 'channel': channel}
 
@@ -470,7 +470,7 @@ for idx, row in resellers.iterrows():
     if (idx + 1) % 10 == 0:
         print(f"  Drafted {idx + 1}/{len(resellers)} DMs...")
 
-print(f"  Done — {len(reseller_messages)} DMs drafted")
+print(f"  Done, {len(reseller_messages)} DMs drafted")
 
 
 # ============================================================
@@ -512,7 +512,7 @@ for idx, row in shops.iterrows():
         'est_monthly_spend_gbp': row.get('est_monthly_spend_gbp', ''),
     })
 
-print(f"  Done — {len(shop_messages)} shop messages drafted")
+print(f"  Done, {len(shop_messages)} shop messages drafted")
 
 
 # ============================================================
