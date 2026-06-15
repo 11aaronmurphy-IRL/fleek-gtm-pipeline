@@ -615,21 +615,24 @@ function processData(rawLeads,rawDay2){
       // Warm + within 7 days → Warm, actively worked
       // Warm + over 7 days → Upgrade to Hot OVERDUE
       //   A warm lead ignored for 7+ days is now urgent
-      // Date urgency — only for non-Hold stages
-      // Hold leads stay warm regardless of last_touch_date
-      // "not interested right now" never becomes hot just because it is overdue
+      // Date urgency — only for non-Hold stages with valid past dates
+      // Missing date = cannot determine urgency, do not change reply_type
+      // Future date = data entry error, ignore it
+      // Only flag overdue if date is between 7 and 730 days in the past
       const reconciledStage=reconcileStage(rawStage, row.last_inbound_text, row.num_touches, row.est_monthly_spend_gbp);
       if((rt==='hot'||rt==='warm') && reconciledStage!=='Hold'){
         const lastTouch=String(row.last_touch_date||'').trim();
-        if(lastTouch && lastTouch.toLowerCase()!=='nan'){
+        if(lastTouch && lastTouch.toLowerCase()!=='nan' && lastTouch.toLowerCase()!=='none'){
           const touchDate=new Date(lastTouch);
-          if(!isNaN(touchDate)){
+          if(!isNaN(touchDate.getTime())){
             const daysSince=Math.floor((new Date()-touchDate)/(1000*60*60*24));
-            if(daysSince>7){
-              rt='hot'; // overdue — surface as urgent
+            // Only flag if genuinely in the past and not ancient data
+            if(daysSince>7 && daysSince<730){
+              rt='hot';
             }
           }
         }
+        // If no last_touch_date — keep reply_type as classified by message
       }
     } else {
       // No message — three factors determine the category:
@@ -649,8 +652,10 @@ function processData(rawLeads,rawDay2){
   leads.forEach(l=>{
     const ph=cleanPhone(l.phone);
     const sc=l.store_name&&l.city?l.store_name.toLowerCase()+'|'+l.city.toLowerCase():'';
-    const isDupe=seen_ids.has(l.lead_id)||(l.handle&&seen_handles.has(l.handle))||(l.email&&seen_emails.has(l.email))||(ph&&seen_phones.has(ph))||(sc&&seen_store_city.has(sc));
-    if(!isDupe){deduped.push(l);seen_ids.add(l.lead_id);if(l.handle)seen_handles.add(l.handle);if(l.email)seen_emails.add(l.email);if(ph)seen_phones.add(ph);if(sc)seen_store_city.add(sc);}
+    // Only match on valid emails — must contain @ and not be blank
+    const validEmail=l.email&&l.email.includes('@')&&l.email.length>3;
+    const isDupe=seen_ids.has(l.lead_id)||(l.handle&&l.handle.length>1&&seen_handles.has(l.handle))||(validEmail&&seen_emails.has(l.email))||(ph&&ph.length>5&&seen_phones.has(ph))||(sc&&seen_store_city.has(sc));
+    if(!isDupe){deduped.push(l);seen_ids.add(l.lead_id);if(l.handle&&l.handle.length>1)seen_handles.add(l.handle);if(validEmail)seen_emails.add(l.email);if(ph&&ph.length>5)seen_phones.add(ph);if(sc)seen_store_city.add(sc);}
     else dupeCount++;
   });
 
@@ -860,17 +865,21 @@ function renderResellers(){
             const spend=r.est_monthly_spend_gbp;
             const spendStr=spend?'£'+Math.round(spend).toLocaleString()+'/mo':'';
             const lastTouch=String(r.last_touch_date||'').trim();
-            let daysStr='';
-            if(lastTouch&&lastTouch.toLowerCase()!=='nan'){
+            let daysStr='No contact date';
+            let daysColor='#999';
+            if(lastTouch&&lastTouch.toLowerCase()!=='nan'&&lastTouch.toLowerCase()!=='none'){
               const d=Math.floor((new Date()-new Date(lastTouch))/(1000*60*60*24));
-              if(d>0) daysStr=d+' days ago';
+              if(d>0&&d<730){
+                daysStr=d+' days ago';
+                daysColor=d>7?'#dc2626':'#16a34a';
+              }
             }
             const vel=r.sales_velocity_30d?Math.round(r.sales_velocity_30d)+' sales/mo':'';
-            const touches=r.num_touches?r.num_touches+' touches':'';
-            if(rt==='hot') return [spendStr,daysStr?'⚠ '+daysStr:'unanswered signal'].filter(Boolean).join(' · ');
-            if(rt==='warm') return [r.obj_type&&r.obj_type!=='none'?r.obj_type.replace('_',' '):'objection',spendStr,daysStr?daysStr:''].filter(Boolean).join(' · ');
-            if(rt==='amber') return [touches+' no reply',vel,spendStr].filter(Boolean).join(' · ');
-            return ['never contacted',vel,spendStr].filter(Boolean).join(' · ');
+            const touches=r.num_touches&&r.num_touches!=='0'?r.num_touches+' touches':'';
+            if(rt==='hot') return spendStr+' · <span style="color:'+daysColor+'">'+daysStr+'</span>';
+            if(rt==='warm') return (r.obj_type&&r.obj_type!=='none'?r.obj_type.replace('_',' ')+' · ':'')+spendStr+' · <span style="color:'+daysColor+'">'+daysStr+'</span>';
+            if(rt==='amber') return (touches?touches+' · ':'')+spendStr+' · <span style="color:#999">'+daysStr+'</span>';
+            return 'never contacted · '+spendStr+' · <span style="color:#999">'+daysStr+'</span>';
           })()}</div>
           <button class="expand-btn" onclick="toggle('${id}')">${exp?'Hide':'View DM'}</button>
         </div>
@@ -1008,6 +1017,16 @@ function renderKanban(){
         const typeColor=isShop?'background:#eff6ff;color:#2563eb':'background:#fdf4ff;color:#7c3aed';
         const rtBadge=l.reply_type==='hot'?'background:#fef2f2;color:#dc2626':l.reply_type==='warm'?'background:#fffbeb;color:#d97706':l.reply_type==='amber'?'background:#fff7ed;color:#c2410c':l.reply_type==='new'?'background:#eff6ff;color:#1d4ed8':'background:#f3f4f6;color:#6b7280';
         const rtLabel=l.reply_type==='hot'?'🔥 Hot reply':l.reply_type==='warm'?'Warm reply':l.reply_type==='amber'?'🟠 Not replied yet':l.reply_type==='new'?'🔵 Not contacted yet':l.reply_type==='cold'?'Cold':'—';
+        const lastTouchRaw=String(l.last_touch_date||'').trim();
+        let touchStr='No contact date';
+        let touchColor='#999';
+        if(lastTouchRaw&&lastTouchRaw.toLowerCase()!=='nan'&&lastTouchRaw.toLowerCase()!=='none'){
+          const td=new Date(lastTouchRaw);
+          if(!isNaN(td.getTime())){
+            const d=Math.floor((new Date()-td)/(1000*60*60*24));
+            if(d>0&&d<730){touchStr=d+' days ago';touchColor=d>7?'#dc2626':'#16a34a';}
+          }
+        }
         const isMeetingCol = s.id === 'Meeting Booked';
         const isConfirmed = confirmedMeetings[l.lead_id] || false;
         return `<div class="kanban-card" draggable="true"
@@ -1020,6 +1039,7 @@ function renderKanban(){
           ${l.est_monthly_spend_gbp?`<div class="k-spend">£${l.est_monthly_spend_gbp.toLocaleString()}/mo est.</div>`:''}
           ${l.last_inbound_text?`<div class="k-sub" style="font-style:italic;margin-top:3px;">"${String(l.last_inbound_text).substring(0,40)}"</div>`:''}
           ${l.reply_type&&l.reply_type!=='none'?`<span class="k-badge" style="${rtBadge};margin-top:4px;">${rtLabel}</span>`:''}
+          <span style="font-size:10px;color:${touchColor};margin-top:2px;display:block;">${touchStr}</span>
           ${isMeetingCol?`<div style="margin-top:8px;padding-top:8px;border-top:0.5px solid #eee;">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:#555;">
               <input type="checkbox" ${isConfirmed?'checked':''} onchange="toggleConfirmed('${l.lead_id}',this.checked)" onclick="event.stopPropagation()" style="cursor:pointer;">
