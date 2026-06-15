@@ -188,37 +188,52 @@ print(f"  Physical shops: {len(shops)}")
 # is completely different to "not interested right now"
 # but both sit in the Replied stage in the CRM.
 
-print("\nClassifying replied leads by message content...")
+# ============================================================
+# USE REPLY TYPES FROM STEP 1
+# ============================================================
+# reply_type is now set in clean_pipeline.py using the
+# three layer classification system. No need to re-classify
+# here. Just use what Step 1 already determined.
+# This also means reply_type is consistent across all scripts.
 
-replied_resellers = resellers[resellers['stage'] == 'Replied'].copy()
-print(f"  Found {len(replied_resellers)} replied resellers to classify")
+print("\nUsing reply types from Step 1 classification...")
 
-reply_classifications = []
-for idx, row in replied_resellers.iterrows():
-    classification = classify_reply(row.get('last_inbound_text', ''))
-    reply_classifications.append({
-        'lead_id': row['lead_id'],
-        **classification
-    })
+# Ensure reply_type column exists with defaults
+if 'reply_type' not in resellers.columns:
+    resellers['reply_type'] = 'amber'
+else:
+    resellers['reply_type'] = resellers['reply_type'].fillna('amber')
 
-reply_df = pd.DataFrame(reply_classifications)
+if 'obj_type' not in resellers.columns:
+    resellers['obj_type'] = 'none'
+else:
+    resellers['obj_type'] = resellers['obj_type'].fillna('none')
 
-# Merge classifications back into resellers
-resellers = resellers.merge(reply_df, on='lead_id', how='left')
+# Add follow_up_timing based on reply_type — vectorised
+resellers['follow_up_timing'] = resellers['reply_type'].map({
+    'hot': 'today',
+    'warm': 'today',
+    'amber': '7_days',
+    'new': '7_days',
+    'cold': 'never',
+}).fillna('7_days')
 
-# Fill non-replied leads
-resellers['reply_type'] = resellers['reply_type'].fillna('none')
-resellers['follow_up_timing'] = resellers['follow_up_timing'].fillna('today')
-resellers['objection_type'] = resellers['objection_type'].fillna('none')
-resellers['recommended_response'] = resellers['recommended_response'].fillna('')
+resellers['recommended_response'] = resellers['reply_type'].map({
+    'hot': 'Respond today — buying signal',
+    'warm': 'Handle objection or set reminder',
+    'amber': 'Re-engage — no reply received',
+    'new': 'First touch — high value hook',
+    'cold': 'SKIP — mark as Lost',
+}).fillna('Follow up')
 
-# Count classification results
 hot = len(resellers[resellers['reply_type'] == 'hot'])
 warm = len(resellers[resellers['reply_type'] == 'warm'])
-cold = len(resellers[resellers['reply_type'] == 'cold'])
-print(f"  Hot replies (contact today): {hot}")
-print(f"  Warm replies (handle objection or set reminder): {warm}")
-print(f"  Cold replies (move to Lost): {cold}")
+amber = len(resellers[resellers['reply_type'] == 'amber'])
+new_leads = len(resellers[resellers['reply_type'] == 'new'])
+print(f"  Hot replies: {hot}")
+print(f"  Warm replies: {warm}")
+print(f"  Amber (contacted, no reply): {amber}")
+print(f"  New (never contacted): {new_leads}")
 
 
 # ============================================================
@@ -231,102 +246,231 @@ print(f"  Cold replies (move to Lost): {cold}")
 
 DAILY_DM_LIMIT = 40
 
-# Exclude Won, Lost, and cold replies from today's list.
-# Hold leads ARE included — they are not dead, just paused.
-# Aaron: nothing is dead unless they say a hard no.
-# Hold means soft no or timing issue — they can still be recovered.
-active_resellers = resellers[
+# ============================================================
+# INTENT-FIRST, WHALE-SECOND DAILY PRIORITISATION
+# ============================================================
+# The 40 DM slots are filled in strict order:
+#
+# STEP A — CLEAR THE DESK (active conversations first)
+# Hot and Warm replies take the top slots automatically.
+# Live deals must always get answered first.
+# Within each group sorted descending by monthly spend.
+# Hot replies come before Warm replies.
+#
+# STEP B — WHALE FILLER (fill remaining slots)
+# If hot + warm is less than 40, fill remaining slots with
+# Amber and New leads — highest spend first.
+# These are the highest value uncontacted accounts.
+#
+# Goal: migrate conversations off Instagram to unlimited channels.
+# The 40 DM cap is the reason channel migration matters.
+# ============================================================
+
+# Exclude Won, Lost, and cold replies — they are not in play
+# All vectorised using .loc[] for performance at 30,000 rows
+active_resellers = resellers.loc[
     (~resellers['stage'].isin(['Won', 'Lost'])) &
     (resellers['reply_type'] != 'cold')
 ].copy()
 
-def score_reseller(row):
-    score = 0
+# Vectorised numeric conversion — no loops, scales to 30k rows
+active_resellers['est_monthly_spend_gbp'] = pd.to_numeric(
+    active_resellers['est_monthly_spend_gbp'], errors='coerce'
+).fillna(0)
+active_resellers['sales_velocity_30d'] = pd.to_numeric(
+    active_resellers['sales_velocity_30d'], errors='coerce'
+).fillna(0)
+active_resellers['followers'] = pd.to_numeric(
+    active_resellers['followers'], errors='coerce'
+).fillna(0)
+active_resellers['active_listings'] = pd.to_numeric(
+    active_resellers['active_listings'], errors='coerce'
+).fillna(0)
+active_resellers['avg_listing_price_gbp'] = pd.to_numeric(
+    active_resellers['avg_listing_price_gbp'], errors='coerce'
+).fillna(0)
 
-    # Signal 1: Hot reply — buying signal, act immediately (50 points)
-    # Aaron: "getting a stalled conversation moving is easier than
-    # starting a new one from scratch"
-    if row['reply_type'] == 'hot':
-        score += 50
+# STEP A: Active conversations — Hot and Warm replies
+# Sorted by spend descending within each group
+hot_replies = active_resellers.loc[
+    active_resellers['reply_type'] == 'hot'
+].sort_values('est_monthly_spend_gbp', ascending=False)
 
-    # Signal 2: Warm reply — needs handling but do not give up (25 points)
-    # Aaron: "nothing is dead unless they say a hard no"
-    elif row['reply_type'] == 'warm':
-        score += 25
+warm_replies = active_resellers.loc[
+    active_resellers['reply_type'] == 'warm'
+].sort_values('est_monthly_spend_gbp', ascending=False)
 
-    # Signal 3: Estimated monthly spend (up to 30 points)
-    # Higher spend = bigger commercial opportunity
-    max_spend = 9000
-    spend_score = min(row['est_monthly_spend_gbp'] / max_spend * 30, 30)
-    score += spend_score
+active_conversations = pd.concat([hot_replies, warm_replies])
+slots_used = len(active_conversations)
+slots_remaining = max(0, DAILY_DM_LIMIT - slots_used)
 
-    # Signal 4: Sales velocity (up to 20 points)
-    # Fast sellers need more stock urgently = need Fleek more
-    max_velocity = 213
-    velocity_score = min(row['sales_velocity_30d'] / max_velocity * 20, 20)
-    score += velocity_score
+print(f"\nStep A — Clear the desk:")
+print(f"  Hot replies: {len(hot_replies)}")
+print(f"  Warm replies: {len(warm_replies)}")
+print(f"  Total active conversations: {slots_used}")
+print(f"  Slots remaining for new outreach: {slots_remaining}")
 
-    # Signal 5: Followers (up to 10 points)
-    # Bigger audience = bigger recurring stock need
-    max_followers = 64798
-    follower_score = min(row['followers'] / max_followers * 10, 10)
-    score += follower_score
+# STEP B: Whale filler — commercial scoring for uncontacted leads
+# ============================================================
+# These leads have no reply history so we cannot use last message.
+# We score them purely on commercial signals from the scraped data.
+#
+# SCORING LOGIC FOR NEW AND AMBER LEADS:
+#
+# 1. Sales velocity (40 points max)
+#    Most important signal. High velocity = they need stock urgently.
+#    200 items/month = restocking constantly = needs Fleek right now.
+#
+# 2. Combined revenue — avg_price x velocity (30 points max)
+#    Rewards quality sellers not just volume.
+#    138 sales at £70 beats 200 sales at £8 every time.
+#    This is the signal that separates premium resellers from bargain sellers.
+#
+# 3. Est monthly spend (20 points max)
+#    Useful but treat as secondary — many rows have it blank or estimated.
+#    Used as a tiebreaker not a primary signal.
+#
+# 4. Followers (15 points max)
+#    Scale of operation. Bigger audience = bigger recurring need.
+#
+# 5. Stock turnover ratio — velocity / active_listings (10 points max)
+#    NOT active listings alone. High listings + low velocity = stock
+#    sitting unsold. High listings + high velocity = genuinely busy.
+#    We want the ratio, not the raw number.
+#
+# 6. Touch point penalty
+#    5 or more touches with no reply = deprioritise heavily.
+#    Drop to bottom of Step B queue.
+#    Fresh high value leads always beat cold ghosts.
+# ============================================================
 
-    # Signal 6: Active listings (up to 5 points)
-    max_listings = 568
-    listing_score = min(row["active_listings"] / max_listings * 5, 5)
-    score += listing_score
+if slots_remaining > 0:
+    filler_pool = active_resellers.loc[
+        active_resellers['reply_type'].isin(['amber', 'new'])
+    ].copy()
 
-    # Signal 7: Combined monthly revenue estimate (up to 15 points)
-    # Aaron insight: a reseller selling 50 items at £65 each
-    # (£3,250/month) is worth more than one selling 200 items at
-    # £8 each (£1,600/month). Multiplying avg listing price by
-    # sales velocity gives a better proxy for actual monthly
-    # turnover than either metric alone.
-    avg_price = pd.to_numeric(row.get("avg_listing_price_gbp", 0), errors="coerce") or 0
-    combined_revenue = avg_price * row["sales_velocity_30d"]
-    max_combined = 65 * 213
-    revenue_score = min(combined_revenue / max_combined * 15, 15)
-    score += revenue_score
+    # Calculate commercial score for each filler lead — vectorised
+    max_velocity = active_resellers['sales_velocity_30d'].max() or 1
+    max_combined = (active_resellers['avg_listing_price_gbp'] * active_resellers['sales_velocity_30d']).max() or 1
+    max_spend = active_resellers['est_monthly_spend_gbp'].max() or 1
+    max_followers = active_resellers['followers'].max() or 1
 
-    return round(score, 2)
+    # Signal 1: Sales velocity (40 points)
+    filler_pool['score_velocity'] = (
+        filler_pool['sales_velocity_30d'] / max_velocity * 40
+    ).clip(0, 40)
 
-active_resellers['priority_score'] = active_resellers.apply(score_reseller, axis=1)
-active_resellers = active_resellers.sort_values('priority_score', ascending=False)
-todays_resellers = active_resellers.head(DAILY_DM_LIMIT).copy()
+    # Signal 2: Combined revenue (30 points)
+    filler_pool['combined_revenue'] = (
+        filler_pool['avg_listing_price_gbp'] * filler_pool['sales_velocity_30d']
+    )
+    filler_pool['score_combined'] = (
+        filler_pool['combined_revenue'] / max_combined * 30
+    ).clip(0, 30)
 
+    # Signal 3: Est monthly spend (20 points)
+    filler_pool['score_spend'] = (
+        filler_pool['est_monthly_spend_gbp'] / max_spend * 20
+    ).clip(0, 20)
+
+    # Signal 4: Followers (15 points)
+    filler_pool['score_followers'] = (
+        filler_pool['followers'] / max_followers * 15
+    ).clip(0, 15)
+
+    # Signal 5: Stock turnover ratio (10 points)
+    # velocity / active_listings — high ratio means stock moving fast
+    # Cap listings at 1 to avoid divide by zero
+    filler_pool['turnover_ratio'] = (
+        filler_pool['sales_velocity_30d'] /
+        filler_pool['active_listings'].clip(lower=1)
+    )
+    max_turnover = filler_pool['turnover_ratio'].max() or 1
+    filler_pool['score_turnover'] = (
+        filler_pool['turnover_ratio'] / max_turnover * 10
+    ).clip(0, 10)
+
+    # Signal 6: Touch point penalty
+    # 5+ touches with no reply = they are ignoring us
+    # Drop score by 50 points so fresh leads always rank higher
+    filler_pool['touch_penalty'] = filler_pool['num_touches'].apply(
+        lambda t: -50 if pd.to_numeric(t, errors='coerce') >= 5 else 0
+    )
+
+    # Total commercial score
+    filler_pool['step_b_score'] = (
+        filler_pool['score_velocity'] +
+        filler_pool['score_combined'] +
+        filler_pool['score_spend'] +
+        filler_pool['score_followers'] +
+        filler_pool['score_turnover'] +
+        filler_pool['touch_penalty']
+    ).round(2)
+
+    # Sort by commercial score descending, take top slots
+    filler_leads = filler_pool.sort_values(
+        'step_b_score', ascending=False
+    ).head(slots_remaining)
+
+    print("Step B - Whale filler:")
+    print(f"  Uncontacted leads in pool: {len(filler_pool)}")
+    print(f"  Selected for today: {len(filler_leads)}")
+    if len(filler_leads) > 0:
+        top = filler_leads.iloc[0]
+        print(f"  Top Step B lead: {top.get('handle','unknown')} | score: {top['step_b_score']:.0f} | velocity: {top['sales_velocity_30d']:.0f}/mo | spend: £{top['est_monthly_spend_gbp']:,.0f}/mo")
+    deprioritised = len(filler_pool[filler_pool['touch_penalty'] < 0])
+    if deprioritised > 0:
+        print(f"  Deprioritised (5+ touches, no reply): {deprioritised} leads moved to bottom")
+
+    todays_resellers = pd.concat([active_conversations, filler_leads]).copy()
+else:
+    todays_resellers = active_conversations.head(DAILY_DM_LIMIT).copy()
+    print("Step B - Skipped: active conversations fill all 40 slots")
+
+# Add priority rank and slot type for transparency
+todays_resellers = todays_resellers.reset_index(drop=True)
+todays_resellers['priority_rank'] = todays_resellers.index + 1
+todays_resellers['slot_type'] = todays_resellers['reply_type'].map({
+    'hot': 'Step A — Active conversation (Hot)',
+    'warm': 'Step A — Active conversation (Warm)',
+    'amber': 'Step B — Whale filler (Amber)',
+    'new': 'Step B — Whale filler (New)',
+}).fillna('Step B — Whale filler')
+
+# Also compute priority score for reference
+active_resellers['combined_revenue'] = (
+    active_resellers['avg_listing_price_gbp'] * active_resellers['sales_velocity_30d']
+)
+
+# Vectorised why_today explanation — no row loops
 def explain_priority(row):
-    reasons = []
-    if row['reply_type'] == 'hot':
-        reasons.append(f"HOT REPLY: {row.get('recommended_response', 'Act now')}")
-    elif row['reply_type'] == 'warm':
+    rt = row.get('reply_type', '')
+    spend = row.get('est_monthly_spend_gbp', 0)
+    if rt == 'hot':
+        return f"Step A — HOT REPLY | Last said: {str(row.get('last_inbound_text',''))[:50]} | £{int(spend):,}/mo"
+    elif rt == 'warm':
         obj = row.get('objection_type', '')
-        if obj == 'platform_objection':
-            reasons.append("OBJECTION: Already on another platform — handle it")
-        elif obj == 'misunderstanding':
-            reasons.append("MISUNDERSTANDING: Clarify Fleek is for sourcing not selling")
-        elif obj == 'timing':
-            reasons.append("TIMING: Set follow up reminder")
-        elif obj == 'sceptical':
-            reasons.append("SCEPTICAL: Needs reassurance — address concerns")
-        else:
-            reasons.append("WARM REPLY: Handle objection or follow up")
-    if row['est_monthly_spend_gbp'] >= 5000:
-        reasons.append(f"High spend: £{int(row['est_monthly_spend_gbp']):,}/mo")
-    if row['sales_velocity_30d'] >= 100:
-        reasons.append(f"Fast seller: {int(row['sales_velocity_30d'])} items/30d")
-    if row['followers'] >= 10000:
-        reasons.append(f"Large: {int(row['followers']):,} followers")
-    if not reasons:
-        reasons.append("Strong metrics across the board")
-    return " | ".join(reasons)
+        obj_label = {
+            'platform_objection': 'Platform objection — handle differentiation',
+            'misunderstanding': 'Misunderstanding — clarify Fleek is for sourcing',
+            'timing': 'Timing issue — send content, set reminder',
+            'soft_no': 'Soft no — send content, follow up in 30 days',
+        }.get(obj, 'Warm reply — handle it')
+        return f"Step A — WARM REPLY | {obj_label} | £{int(spend):,}/mo"
+    elif rt == 'amber':
+        notes = str(row.get('notes', '') or '')
+        note_str = f" | Note: {notes}" if notes and notes != 'nan' else ''
+        return f"Step B — WHALE FILLER (Amber) | Contacted, no reply | £{int(spend):,}/mo{note_str}"
+    else:
+        return f"Step B — WHALE FILLER (New) | First touch | £{int(spend):,}/mo"
 
 todays_resellers['why_today'] = todays_resellers.apply(explain_priority, axis=1)
 
-print(f"\nTop 40 resellers for today:")
-print(f"  Hot replies: {len(todays_resellers[todays_resellers['reply_type'] == 'hot'])}")
-print(f"  Warm replies: {len(todays_resellers[todays_resellers['reply_type'] == 'warm'])}")
-print(f"  New/not yet replied: {len(todays_resellers[todays_resellers['reply_type'] == 'none'])}")
+print(f"\nToday's 40 DMs:")
+print(f"  Step A — Hot replies: {len(todays_resellers[todays_resellers['reply_type']=='hot'])}")
+print(f"  Step A — Warm replies: {len(todays_resellers[todays_resellers['reply_type']=='warm'])}")
+print(f"  Step B — Amber filler: {len(todays_resellers[todays_resellers['reply_type']=='amber'])}")
+print(f"  Step B — New filler: {len(todays_resellers[todays_resellers['reply_type']=='new'])}")
 
 
 # ============================================================
