@@ -600,6 +600,7 @@ function processData(rawLeads,rawDay2){
     const rawMsg=String(row.last_inbound_text||'').trim().replace(/^['"`]+|['"`]+$/g,'');
     const touches=parseInt(row.num_touches)||0;
     let rt='new';
+    let isOverdueLead=false;
     const effectiveMsg = (rawMsg && rawMsg.toLowerCase()!=='nan' && rawMsg.toLowerCase()!=='none' && rawMsg.length>1) ? rawMsg : '';
     if(effectiveMsg){
       const classified=classifyMessage(effectiveMsg);
@@ -615,24 +616,25 @@ function processData(rawLeads,rawDay2){
       // Warm + within 7 days → Warm, actively worked
       // Warm + over 7 days → Upgrade to Hot OVERDUE
       //   A warm lead ignored for 7+ days is now urgent
-      // Date urgency — only for non-Hold stages with valid past dates
-      // Missing date = cannot determine urgency, do not change reply_type
-      // Future date = data entry error, ignore it
-      // Only flag overdue if date is between 7 and 730 days in the past
+      // Date urgency — set overdue flag separately, do NOT change rt
+      // rt stays as message classification only so counts are accurate
+      // overdue flag is used for display ordering and card labels only
       const reconciledStage=reconcileStage(rawStage, row.last_inbound_text, row.num_touches, row.est_monthly_spend_gbp);
       if((rt==='hot'||rt==='warm') && reconciledStage!=='Hold'){
         const lastTouch=String(row.last_touch_date||'').trim();
         if(lastTouch && lastTouch.toLowerCase()!=='nan' && lastTouch.toLowerCase()!=='none'){
-          const touchDate=new Date(lastTouch);
+          let touchDate;
+          if(lastTouch.match(/^\d{2}\/\d{2}\/\d{4}$/)){
+            const parts=lastTouch.split('/');
+            touchDate=new Date(parts[2]+'-'+parts[1]+'-'+parts[0]);
+          } else {
+            touchDate=new Date(lastTouch);
+          }
           if(!isNaN(touchDate.getTime())){
             const daysSince=Math.floor((new Date()-touchDate)/(1000*60*60*24));
-            // Only flag if genuinely in the past and not ancient data
-            if(daysSince>7 && daysSince<730){
-              rt='hot';
-            }
+            if(daysSince>7 && daysSince<730) isOverdueLead=true;
           }
         }
-        // If no last_touch_date — keep reply_type as classified by message
       }
     } else {
       // No message — three factors determine the category:
@@ -644,7 +646,7 @@ function processData(rawLeads,rawDay2){
       rt = (touches > 0 || hasNotes) ? 'amber' : 'new';
     }
     const ot=getObjType(row.last_inbound_text);
-    return{lead_id:String(row.lead_id||''),source:row.source||'',handle,store_name:row.store_name||'',contact_name:row.contact_name||'',email,phone:row.phone||'',city:row.city||'',country:row.country||'',followers:parseFloat(row.followers)||0,active_listings:parseFloat(row.active_listings)||0,avg_listing_price_gbp:parseFloat(row.avg_listing_price_gbp)||0,sales_velocity_30d:parseFloat(row.sales_velocity_30d)||0,est_monthly_spend_gbp:spend,stage,first_seen_date:row.first_seen_date||'',last_touch_date:row.last_touch_date||'',num_touches:parseInt(row.num_touches)||0,last_inbound_text:row.last_inbound_text||'',assigned_bdr:row.assigned_bdr||'',notes:row.notes||'',lead_type:lt,reply_type:rt,obj_type:ot};
+    return{lead_id:String(row.lead_id||''),source:row.source||'',handle,store_name:row.store_name||'',contact_name:row.contact_name||'',email,phone:row.phone||'',city:row.city||'',country:row.country||'',followers:parseFloat(row.followers)||0,active_listings:parseFloat(row.active_listings)||0,avg_listing_price_gbp:parseFloat(row.avg_listing_price_gbp)||0,sales_velocity_30d:parseFloat(row.sales_velocity_30d)||0,est_monthly_spend_gbp:spend,stage,first_seen_date:row.first_seen_date||'',last_touch_date:row.last_touch_date||'',num_touches:parseInt(row.num_touches)||0,last_inbound_text:row.last_inbound_text||'',assigned_bdr:row.assigned_bdr||'',notes:row.notes||'',lead_type:lt,reply_type:rt,obj_type:ot,overdue:isOverdueLead};
   });
 
   const seen_ids=new Set(),seen_handles=new Set(),seen_emails=new Set(),seen_phones=new Set(),seen_store_city=new Set();
@@ -668,7 +670,12 @@ function processData(rawLeads,rawDay2){
 
   const hotReplies = resellers
     .filter(r=>r.reply_type==='hot' && !['Won','Lost'].includes(r.stage))
-    .sort((a,b)=>b.est_monthly_spend_gbp-a.est_monthly_spend_gbp);
+    .sort((a,b)=>{
+      // Overdue leads first, then by spend descending
+      if(a.overdue&&!b.overdue) return -1;
+      if(!a.overdue&&b.overdue) return 1;
+      return b.est_monthly_spend_gbp-a.est_monthly_spend_gbp;
+    });
 
   const warmReplies = resellers
     .filter(r=>r.reply_type==='warm' && !['Won','Lost'].includes(r.stage))
@@ -767,8 +774,8 @@ function renderAll(){
     <div class="metric"><div class="metric-num amber">${phyShops.length}</div><div class="metric-label">Physical shops</div></div>
     <div class="metric"><div class="metric-num green">${withEmail.length}</div><div class="metric-label">Resellers with email</div></div>
     <div class="metric"><div class="metric-num blue">${dupeCount}</div><div class="metric-label">Duplicates removed</div></div>
-    <div class="metric"><div class="metric-num">${leads.filter(l=>l.stage==='Replied').length}</div><div class="metric-label">Replied leads</div></div>
-    <div class="metric"><div class="metric-num red">${leads.filter(l=>l.reply_type==='hot').length}</div><div class="metric-label">Hot replies</div></div>
+    <div class="metric"><div class="metric-num">${leads.filter(l=>l.stage==='Replied'&&l.lead_type!=='physical_shop').length}</div><div class="metric-label">Replied leads</div></div>
+    <div class="metric"><div class="metric-num red">${leads.filter(l=>l.reply_type==='hot'&&l.lead_type!=='physical_shop').length}</div><div class="metric-label">Hot replies</div></div>
     <div class="metric"><div class="metric-num">${leads.filter(l=>l.stage==='Won').length}</div><div class="metric-label">Won deals</div></div>
   `;
   document.getElementById('f1-desc').textContent=`${leads.length+dupeCount} raw leads → ${leads.length} clean. ${dupeCount} duplicates removed. Handles normalised, stages standardised, dates fixed, spend figures cleaned.`;
@@ -876,7 +883,7 @@ function renderResellers(){
             }
             const vel=r.sales_velocity_30d?Math.round(r.sales_velocity_30d)+' sales/mo':'';
             const touches=r.num_touches&&r.num_touches!=='0'?r.num_touches+' touches':'';
-            if(rt==='hot') return spendStr+' · <span style="color:'+daysColor+'">'+daysStr+'</span>';
+            if(rt==='hot') return spendStr+(r.overdue?' · <span style="color:#dc2626">⚠ '+daysStr+'</span>':daysStr&&daysStr!=='No contact date'?' · <span style="color:#16a34a">'+daysStr+'</span>':daysStr?' · <span style="color:#999">'+daysStr+'</span>':'');
             if(rt==='warm') return (r.obj_type&&r.obj_type!=='none'?r.obj_type.replace('_',' ')+' · ':'')+spendStr+' · <span style="color:'+daysColor+'">'+daysStr+'</span>';
             if(rt==='amber') return (touches?touches+' · ':'')+spendStr+' · <span style="color:#999">'+daysStr+'</span>';
             return 'never contacted · '+spendStr+' · <span style="color:#999">'+daysStr+'</span>';
