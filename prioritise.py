@@ -1,783 +1,619 @@
 """
-FLEEK PIPELINE CLEANER — STEP 1
-================================
-This script takes the raw messy Excel pipeline and outputs a clean CSV.
-It is the foundation everything else builds on top of.
-Think of it like washing and sorting the laundry before you can fold it.
+FLEEK PIPELINE — STEP 2: PRIORITISATION
+========================================
+This script reads the clean pipeline from Step 1 and answers
+two questions:
+
+1. Which 40 resellers do we DM on Instagram today?
+2. Which physical shops do we contact next, and in what order?
+
+KEY COMMERCIAL INSIGHT (Aaron Murphy):
+---------------------------------------
+Just because a lead has "Replied" does not mean they need a
+follow up in the traditional sense. The last_inbound_text tells
+the real story. We split replied leads into three buckets:
+
+HOT REPLY — buying signal or open question. Contact today.
+Examples: "yeah keen", "send me the bundle list", "can we talk fri"
+
+WARM REPLY — objection or timing issue. Handle it, do not give up.
+Examples:
+- "already on another platform" = OBJECTION. Handle it.
+  Response: most of our best customers use multiple platforms.
+  Fleek gives you stock you cannot get anywhere else.
+- "We already sell on Vinted" = MISUNDERSTANDING. Clarify.
+  Fleek is a wholesale sourcing tool, not a selling platform.
+- "maybe next month" = TIMING. Follow up in 30 days.
+- "Too busy this season" = TIMING. Follow up in 6 weeks.
+- "not interested right now" = SOFT NO. Follow up in 30 days.
+
+COLD REPLY — explicit rejection with no opening left.
+Examples: "stop messaging me", "remove me from your list"
+Only these go to Lost. Nothing is dead unless they say a hard no.
 
 HOW TO RUN:
-    python clean_pipeline.py
+    python prioritise.py
+
+INPUT:
+    pipeline_clean.csv — the output from Step 1
 
 OUTPUT:
-    pipeline_clean.csv — a clean version of the pipeline ready for the next steps
+    todays_resellers.csv  — top 40 Instagram resellers to DM today
+    todays_shops.csv      — physical shops sequenced by priority and city
 """
 
 import pandas as pd
-import re
+import json
+import urllib.request
 import warnings
 warnings.filterwarnings('ignore')
 
 
 # ============================================================
-# STEP 1: READ THE EXCEL FILE
+# REPLY CLASSIFICATION USING CLAUDE API
 # ============================================================
-# We read both tabs, pipeline and new_drop_day2, then stack them
-# together into one combined list. This means the tool handles
-# both the original 265 leads and the fresh day-2 batch in one go.
+# Instead of manually listing every possible reply phrase,
+# we use Claude to read each last message and judge whether
+# a follow up is needed and what type of response to send.
+#
+# This is more reliable than a static keyword list because
+# human language is unpredictable. Claude understands context.
+#
+# Aaron's commercial logic is baked into the prompt so Claude
+# makes decisions the way a good AE would, not like a robot.
 
-print("Reading Excel file...")
+def classify_reply(last_message):
+    """
+    Takes the last message a lead sent and returns:
+    - reply_type: hot, warm, or cold
+    - follow_up_timing: today, 7_days, 30_days, 60_days, never
+    - objection_type: what objection to handle if any
+    - recommended_response: what kind of message to send back
+    """
+    if not last_message or str(last_message).strip() == '' or str(last_message).strip() == 'nan':
+        return {
+            'reply_type': 'none',
+            'follow_up_timing': 'today',
+            'objection_type': None,
+            'recommended_response': 'No reply yet — send first outreach'
+        }
 
-pipeline = pd.read_excel(
-    "Fleek_-_Acquisition_Case_Study_-_Pipeline_Data.xlsx",
-    sheet_name="pipeline",
-    dtype=str  # Read everything as text first, we'll convert later
+    prompt = f"""You are a sales analyst for Fleek, a B2B wholesale marketplace for secondhand vintage clothing.
+
+A lead has sent this message: "{last_message}"
+
+Classify this reply using these commercial rules:
+
+HOT — buying signal or genuine question that needs an answer today
+Examples: "yeah keen", "send me the bundle list", "can we do a call", "what brands do you take", "how does payout work", "interested", "sounds good"
+
+WARM — objection or timing issue. Never give up on these. Handle them.
+- "already on another platform" = objection, handle it (most customers use multiple platforms)
+- "We already sell on Vinted" = misunderstanding, clarify (Fleek is for sourcing not selling)
+- "maybe next month" = timing, follow up in 30 days
+- "Too busy this season" = timing, follow up in 6 weeks
+- "not interested right now" = soft no, follow up in 30 days
+- "need to think about it" = undecided, follow up in 7 days
+- "whats the catch" = sceptical, needs reassurance today
+
+COLD — explicit hard rejection with no opening left
+Examples: "stop messaging me", "remove me from your list", "definitely not for us ever"
+
+Return ONLY a JSON object with no other text:
+{{"reply_type": "hot|warm|cold", "follow_up_timing": "today|7_days|30_days|60_days|never", "objection_type": "platform_objection|timing|misunderstanding|sceptical|hard_no|none", "recommended_response": "one sentence describing what to say next"}}"""
+
+    try:
+        data = json.dumps({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 200,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://api.anthropic.com/v1/messages',
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            text = result['content'][0]['text'].strip()
+            # Extract JSON from response
+            start = text.find('{')
+            end = text.rfind('}') + 1
+            if start >= 0 and end > start:
+                return json.loads(text[start:end])
+    except:
+        pass
+
+    # Fallback if API call fails — use simple keyword matching
+    msg = str(last_message).lower()
+
+    hard_no = ['stop messaging', 'remove me', 'not for us ever', 'never']
+    buying = ['yeah keen', 'sounds good', 'send me', 'can we talk', 'interested',
+              'bundle list', 'call fri', 'drop details', 'when can we']
+    objections = ['another platform', 'already on', 'sell on vinted', 'too busy',
+                  'not interested', 'maybe next month', 'try later', 'need to think']
+
+    if any(phrase in msg for phrase in hard_no):
+        return {'reply_type': 'cold', 'follow_up_timing': 'never',
+                'objection_type': 'hard_no',
+                'recommended_response': 'Move to Lost — explicit rejection'}
+    elif any(phrase in msg for phrase in buying):
+        return {'reply_type': 'hot', 'follow_up_timing': 'today',
+                'objection_type': 'none',
+                'recommended_response': 'Respond immediately — strong buying signal'}
+    elif any(phrase in msg for phrase in objections):
+        return {'reply_type': 'warm', 'follow_up_timing': '30_days',
+                'objection_type': 'timing',
+                'recommended_response': 'Handle objection or set follow up reminder'}
+    else:
+        return {'reply_type': 'hot', 'follow_up_timing': 'today',
+                'objection_type': 'none',
+                'recommended_response': 'Replied but unclear — follow up to keep momentum'}
+
+
+# ============================================================
+# READ THE CLEAN PIPELINE
+# ============================================================
+
+print("Reading clean pipeline...")
+df = pd.read_csv('pipeline_clean.csv', dtype=str)
+
+numeric_cols = ['followers', 'active_listings', 'sales_velocity_30d',
+                'est_monthly_spend_gbp', 'num_touches']
+for col in numeric_cols:
+    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+print(f"  Loaded {len(df)} clean leads")
+
+
+# ============================================================
+# SPLIT INTO RESELLERS AND PHYSICAL SHOPS
+# ============================================================
+
+resellers = df[df['lead_type'].isin(['reseller', 'reseller_with_email'])].copy()
+shops = df[df['lead_type'] == 'physical_shop'].copy()
+
+print(f"  Resellers: {len(resellers)}")
+print(f"  Physical shops: {len(shops)}")
+
+
+# ============================================================
+# CLASSIFY REPLIED LEADS BY MESSAGE CONTENT
+# ============================================================
+# We check every Replied lead to understand what kind of
+# follow up is actually needed. A reply saying "yeah keen"
+# is completely different to "not interested right now"
+# but both sit in the Replied stage in the CRM.
+
+# ============================================================
+# USE REPLY TYPES FROM STEP 1
+# ============================================================
+# reply_type is now set in clean_pipeline.py using the
+# three layer classification system. No need to re-classify
+# here. Just use what Step 1 already determined.
+# This also means reply_type is consistent across all scripts.
+
+print("\nUsing reply types from Step 1 classification...")
+
+# Ensure reply_type column exists with defaults
+if 'reply_type' not in resellers.columns:
+    resellers['reply_type'] = 'amber'
+else:
+    resellers['reply_type'] = resellers['reply_type'].fillna('amber')
+
+if 'obj_type' not in resellers.columns:
+    resellers['obj_type'] = 'none'
+else:
+    resellers['obj_type'] = resellers['obj_type'].fillna('none')
+
+# Add follow_up_timing based on reply_type — vectorised
+resellers['follow_up_timing'] = resellers['reply_type'].map({
+    'hot': 'today',
+    'warm': 'today',
+    'amber': '7_days',
+    'new': '7_days',
+    'cold': 'never',
+}).fillna('7_days')
+
+resellers['recommended_response'] = resellers['reply_type'].map({
+    'hot': 'Respond today — buying signal',
+    'warm': 'Handle objection or set reminder',
+    'amber': 'Re-engage — no reply received',
+    'new': 'First touch — high value hook',
+    'cold': 'SKIP — mark as Lost',
+}).fillna('Follow up')
+
+hot = len(resellers[resellers['reply_type'] == 'hot'])
+warm = len(resellers[resellers['reply_type'] == 'warm'])
+amber = len(resellers[resellers['reply_type'] == 'amber'])
+new_leads = len(resellers[resellers['reply_type'] == 'new'])
+print(f"  Hot replies: {hot}")
+print(f"  Warm replies: {warm}")
+print(f"  Amber (contacted, no reply): {amber}")
+print(f"  New (never contacted): {new_leads}")
+
+
+# ============================================================
+# SCORE AND PRIORITISE RESELLERS FOR TODAY
+# ============================================================
+# With only 40 DMs per day we score every reseller and take
+# the top 40. The scoring reflects Aaron's commercial logic:
+# replied leads with buying signals are worth more than a
+# brand new high-follower account that has never been contacted.
+
+DAILY_DM_LIMIT = 40
+
+# ============================================================
+# INTENT-FIRST, WHALE-SECOND DAILY PRIORITISATION
+# ============================================================
+# The 40 DM slots are filled in strict order:
+#
+# STEP A — CLEAR THE DESK (active conversations first)
+# Hot and Warm replies take the top slots automatically.
+# Live deals must always get answered first.
+# Within each group sorted descending by monthly spend.
+# Hot replies come before Warm replies.
+#
+# STEP B — WHALE FILLER (fill remaining slots)
+# If hot + warm is less than 40, fill remaining slots with
+# Amber and New leads — highest spend first.
+# These are the highest value uncontacted accounts.
+#
+# Goal: migrate conversations off Instagram to unlimited channels.
+# The 40 DM cap is the reason channel migration matters.
+# ============================================================
+
+# Exclude Won, Lost, and cold replies — they are not in play
+# All vectorised using .loc[] for performance at 30,000 rows
+active_resellers = resellers.loc[
+    (~resellers['stage'].isin(['Won', 'Lost'])) &
+    (resellers['reply_type'] != 'cold')
+].copy()
+
+# Vectorised numeric conversion — no loops, scales to 30k rows
+active_resellers['est_monthly_spend_gbp'] = pd.to_numeric(
+    active_resellers['est_monthly_spend_gbp'], errors='coerce'
+).fillna(0)
+active_resellers['sales_velocity_30d'] = pd.to_numeric(
+    active_resellers['sales_velocity_30d'], errors='coerce'
+).fillna(0)
+active_resellers['followers'] = pd.to_numeric(
+    active_resellers['followers'], errors='coerce'
+).fillna(0)
+active_resellers['active_listings'] = pd.to_numeric(
+    active_resellers['active_listings'], errors='coerce'
+).fillna(0)
+active_resellers['avg_listing_price_gbp'] = pd.to_numeric(
+    active_resellers['avg_listing_price_gbp'], errors='coerce'
+).fillna(0)
+
+# STEP A: Active conversations — Hot and Warm replies
+# Sorted by spend descending within each group
+hot_replies = active_resellers.loc[
+    active_resellers['reply_type'] == 'hot'
+].sort_values('est_monthly_spend_gbp', ascending=False)
+
+warm_replies = active_resellers.loc[
+    active_resellers['reply_type'] == 'warm'
+].sort_values('est_monthly_spend_gbp', ascending=False)
+
+active_conversations = pd.concat([hot_replies, warm_replies])
+slots_used = len(active_conversations)
+slots_remaining = max(0, DAILY_DM_LIMIT - slots_used)
+
+print(f"\nStep A — Clear the desk:")
+print(f"  Hot replies: {len(hot_replies)}")
+print(f"  Warm replies: {len(warm_replies)}")
+print(f"  Total active conversations: {slots_used}")
+print(f"  Slots remaining for new outreach: {slots_remaining}")
+
+# STEP B: Whale filler — commercial scoring for uncontacted leads
+# ============================================================
+# These leads have no reply history so we cannot use last message.
+# We score them purely on commercial signals from the scraped data.
+#
+# SCORING LOGIC FOR NEW AND AMBER LEADS:
+#
+# 1. Sales velocity (40 points max)
+#    Most important signal. High velocity = they need stock urgently.
+#    200 items/month = restocking constantly = needs Fleek right now.
+#
+# 2. Combined revenue — avg_price x velocity (30 points max)
+#    Rewards quality sellers not just volume.
+#    138 sales at £70 beats 200 sales at £8 every time.
+#    This is the signal that separates premium resellers from bargain sellers.
+#
+# 3. Est monthly spend (20 points max)
+#    Useful but treat as secondary — many rows have it blank or estimated.
+#    Used as a tiebreaker not a primary signal.
+#
+# 4. Followers (15 points max)
+#    Scale of operation. Bigger audience = bigger recurring need.
+#
+# 5. Stock turnover ratio — velocity / active_listings (10 points max)
+#    NOT active listings alone. High listings + low velocity = stock
+#    sitting unsold. High listings + high velocity = genuinely busy.
+#    We want the ratio, not the raw number.
+#
+# 6. Touch point penalty
+#    5 or more touches with no reply = deprioritise heavily.
+#    Drop to bottom of Step B queue.
+#    Fresh high value leads always beat cold ghosts.
+# ============================================================
+
+if slots_remaining > 0:
+    filler_pool = active_resellers.loc[
+        active_resellers['reply_type'].isin(['amber', 'new'])
+    ].copy()
+
+    # Calculate commercial score for each filler lead — vectorised
+    max_velocity = active_resellers['sales_velocity_30d'].max() or 1
+    max_combined = (active_resellers['avg_listing_price_gbp'] * active_resellers['sales_velocity_30d']).max() or 1
+    max_spend = active_resellers['est_monthly_spend_gbp'].max() or 1
+    max_followers = active_resellers['followers'].max() or 1
+
+    # Signal 1: Sales velocity (40 points)
+    filler_pool['score_velocity'] = (
+        filler_pool['sales_velocity_30d'] / max_velocity * 40
+    ).clip(0, 40)
+
+    # Signal 2: Combined revenue (30 points)
+    filler_pool['combined_revenue'] = (
+        filler_pool['avg_listing_price_gbp'] * filler_pool['sales_velocity_30d']
+    )
+    filler_pool['score_combined'] = (
+        filler_pool['combined_revenue'] / max_combined * 30
+    ).clip(0, 30)
+
+    # Signal 3: Est monthly spend (20 points)
+    filler_pool['score_spend'] = (
+        filler_pool['est_monthly_spend_gbp'] / max_spend * 20
+    ).clip(0, 20)
+
+    # Signal 4: Followers (15 points)
+    filler_pool['score_followers'] = (
+        filler_pool['followers'] / max_followers * 15
+    ).clip(0, 15)
+
+    # Signal 5: Stock turnover ratio (10 points)
+    # velocity / active_listings — high ratio means stock moving fast
+    # Cap listings at 1 to avoid divide by zero
+    filler_pool['turnover_ratio'] = (
+        filler_pool['sales_velocity_30d'] /
+        filler_pool['active_listings'].clip(lower=1)
+    )
+    max_turnover = filler_pool['turnover_ratio'].max() or 1
+    filler_pool['score_turnover'] = (
+        filler_pool['turnover_ratio'] / max_turnover * 10
+    ).clip(0, 10)
+
+    # Signal 6: Touch point penalty
+    # 5+ touches with no reply = they are ignoring us
+    # Drop score by 50 points so fresh leads always rank higher
+    filler_pool['touch_penalty'] = filler_pool['num_touches'].apply(
+        lambda t: -50 if pd.to_numeric(t, errors='coerce') >= 5 else 0
+    )
+
+    # Total commercial score
+    filler_pool['step_b_score'] = (
+        filler_pool['score_velocity'] +
+        filler_pool['score_combined'] +
+        filler_pool['score_spend'] +
+        filler_pool['score_followers'] +
+        filler_pool['score_turnover'] +
+        filler_pool['touch_penalty']
+    ).round(2)
+
+    # Sort by commercial score descending, take top slots
+    filler_leads = filler_pool.sort_values(
+        'step_b_score', ascending=False
+    ).head(slots_remaining)
+
+    print("Step B - Whale filler:")
+    print(f"  Uncontacted leads in pool: {len(filler_pool)}")
+    print(f"  Selected for today: {len(filler_leads)}")
+    if len(filler_leads) > 0:
+        top = filler_leads.iloc[0]
+        print(f"  Top Step B lead: {top.get('handle','unknown')} | score: {top['step_b_score']:.0f} | velocity: {top['sales_velocity_30d']:.0f}/mo | spend: £{top['est_monthly_spend_gbp']:,.0f}/mo")
+    deprioritised = len(filler_pool[filler_pool['touch_penalty'] < 0])
+    if deprioritised > 0:
+        print(f"  Deprioritised (5+ touches, no reply): {deprioritised} leads moved to bottom")
+
+    todays_resellers = pd.concat([active_conversations, filler_leads]).copy()
+else:
+    todays_resellers = active_conversations.head(DAILY_DM_LIMIT).copy()
+    print("Step B - Skipped: active conversations fill all 40 slots")
+
+# Add priority rank and slot type for transparency
+todays_resellers = todays_resellers.reset_index(drop=True)
+todays_resellers['priority_rank'] = todays_resellers.index + 1
+todays_resellers['slot_type'] = todays_resellers['reply_type'].map({
+    'hot': 'Step A — Active conversation (Hot)',
+    'warm': 'Step A — Active conversation (Warm)',
+    'amber': 'Step B — Whale filler (Amber)',
+    'new': 'Step B — Whale filler (New)',
+}).fillna('Step B — Whale filler')
+
+# Also compute priority score for reference
+active_resellers['combined_revenue'] = (
+    active_resellers['avg_listing_price_gbp'] * active_resellers['sales_velocity_30d']
 )
 
-# Day 2 leads are intentionally NOT read here.
-# They are handled separately by batch_handler.py which
-# checks for duplicates before adding them to the pipeline.
-# This means the batch handler can properly simulate
-# receiving new leads the next day without everything
-# already being in the pipeline.
-df = pipeline.copy()
+# Vectorised why_today explanation — no row loops
+def explain_priority(row):
+    rt = row.get('reply_type', '')
+    spend = row.get('est_monthly_spend_gbp', 0)
+    if rt == 'hot':
+        return f"Step A — HOT REPLY | Last said: {str(row.get('last_inbound_text',''))[:50]} | £{int(spend):,}/mo"
+    elif rt == 'warm':
+        obj = row.get('objection_type', '')
+        obj_label = {
+            'platform_objection': 'Platform objection — handle differentiation',
+            'misunderstanding': 'Misunderstanding — clarify Fleek is for sourcing',
+            'timing': 'Timing issue — send content, set reminder',
+            'soft_no': 'Soft no — send content, follow up in 30 days',
+        }.get(obj, 'Warm reply — handle it')
+        return f"Step A — WARM REPLY | {obj_label} | £{int(spend):,}/mo"
+    elif rt == 'amber':
+        notes = str(row.get('notes', '') or '')
+        note_str = f" | Note: {notes}" if notes and notes != 'nan' else ''
+        return f"Step B — WHALE FILLER (Amber) | Contacted, no reply | £{int(spend):,}/mo{note_str}"
+    else:
+        return f"Step B — WHALE FILLER (New) | First touch | £{int(spend):,}/mo"
 
-print(f"  Loaded {len(df)} pipeline leads")
-print(f"  Note: day 2 leads handled separately by batch_handler.py")
+todays_resellers['why_today'] = todays_resellers.apply(explain_priority, axis=1)
 
-
-# ============================================================
-# STEP 2: CLEAN INSTAGRAM HANDLES
-# ============================================================
-# The handle column is a mess. Some reps typed @sepiacollective,
-# some typed instagram.com/sepiacollective, some just typed
-# sepiacollective. We strip everything down to just the plain
-# lowercase username so the tool can reliably identify people.
-
-def clean_handle(handle):
-    if pd.isna(handle) or str(handle).strip() == '':
-        return ''
-    h = str(handle).strip().lower()
-    # Remove full URL prefix
-    h = h.replace('instagram.com/', '')
-    h = h.replace('https://www.instagram.com/', '')
-    h = h.replace('http://www.instagram.com/', '')
-    # Remove @ symbol
-    h = h.lstrip('@')
-    return h.strip()
-
-df['handle'] = df['handle'].apply(clean_handle)
-
-print(f"  Handles cleaned")
+print(f"\nToday's 40 DMs:")
+print(f"  Step A — Hot replies: {len(todays_resellers[todays_resellers['reply_type']=='hot'])}")
+print(f"  Step A — Warm replies: {len(todays_resellers[todays_resellers['reply_type']=='warm'])}")
+print(f"  Step B — Amber filler: {len(todays_resellers[todays_resellers['reply_type']=='amber'])}")
+print(f"  Step B — New filler: {len(todays_resellers[todays_resellers['reply_type']=='new'])}")
 
 
 # ============================================================
-# STEP 3: STANDARDISE STAGE NAMES
+# SEQUENCE PHYSICAL SHOPS
 # ============================================================
-# Stage names were entered by three different BDRs with no
-# consistent format. "contacted", "Contacted", "contacted "
-# all mean the same thing. We collapse everything into seven
-# clean stages that drive the next action for each lead.
+# Physical shops have no daily limit so we sequence all of them.
+# UK shops grouped by city for efficient visit planning.
+# International shops get email and call only for now.
 #
-# The seven stages are:
-#   New          — never contacted
-#   Contacted    — we reached out, no reply yet
-#   Replied      — they responded
-#   Meeting Booked — call or visit scheduled
-#   Negotiating  — active commercial conversation
-#   Won          — deal closed
-#   Lost         — dead for now
+# Within each city:
+# 1. Stage priority (Negotiating first, then Meeting Booked, etc)
+# 2. Then by spend (highest value first within same stage)
 
-STAGE_MAP = {
-    # New
-    'new': 'New',
-    'new lead': 'New',
-    'new_lead': 'New',
-
-    # Contacted
-    'contacted': 'Contacted',
-    'contact': 'Contacted',
-    'no response': 'Contacted',
-
-    # Replied
-    'replied': 'Replied',
-    'reply': 'Replied',
-    'warm': 'Replied',
-    'warm lead': 'Replied',
-
-    # Meeting Booked
-    'call booked': 'Meeting Booked',
-    'call-booked': 'Meeting Booked',
-    'call_booked': 'Meeting Booked',
-
-    # Negotiating
-    'negotiating': 'Negotiating',
-    'in negotiation': 'Negotiating',
-    'negotiation': 'Negotiating',
-
-    # Won
-    'won': 'Won',
-    'closed won': 'Won',
-    'closed_won': 'Won',
-    'wон': 'Won',
-
-    # Lost
-    'lost': 'Lost',
-    'ghosted': 'Lost',
-    'no reply': 'Lost',
+STAGE_PRIORITY = {
+    'Negotiating': 1,
+    'Meeting Booked': 2,
+    'Replied': 3,
+    'Contacted': 4,
+    'New': 5,
+    'Hold': 6,  # Hold = soft no or timing issue, follow up later
+    'Lost': 7,  # Lost = explicit hard no only
+    'Won': 8,
 }
 
-def clean_stage(stage):
-    if pd.isna(stage) or str(stage).strip() == '':
-        return 'New'
-    # Lowercase and strip whitespace for reliable matching
-    s = str(stage).strip().lower()
-    return STAGE_MAP.get(s, 'New')  # Default to New if unrecognised
+shops['stage_priority'] = shops['stage'].map(STAGE_PRIORITY).fillna(5)
 
-df['stage'] = df['stage'].apply(clean_stage)
+uk_shops = shops[shops['country'] == 'UK'].copy()
+intl_shops = shops[shops['country'] != 'UK'].copy()
 
-# Show what stages we now have
-stage_counts = df['stage'].value_counts()
-print(f"  Stages standardised: {dict(stage_counts)}")
-
-
-# ============================================================
-# STEP 4: FIX DATE FORMATS
-# ============================================================
-# Dates are stored in multiple formats: 2026-01-04, 04/12/2025,
-# Dec 29, Jan 5, Feb 27. We convert everything to YYYY-MM-DD
-# so the tool can sort and compare dates reliably.
-
-def clean_date(date_val):
-    if pd.isna(date_val) or str(date_val).strip() == '':
-        return ''
-    try:
-        # pandas can parse most date formats automatically
-        parsed = pd.to_datetime(str(date_val).strip(), dayfirst=True, errors='coerce')
-        if pd.isna(parsed):
-            return ''
-        return parsed.strftime('%Y-%m-%d')
-    except:
-        return ''
-
-df['first_seen_date'] = df['first_seen_date'].apply(clean_date)
-df['last_touch_date'] = df['last_touch_date'].apply(clean_date)
-
-print(f"  Dates standardised")
-
-
-# ============================================================
-# STEP 5: CLEAN SPEND FIGURES
-# ============================================================
-# The est_monthly_spend_gbp column has values like:
-# £5,170 or 9000 or £9,000 or 140
-# We strip the £ sign and commas and convert to a plain number
-# so we can sort and prioritise leads by commercial value.
-
-def clean_spend(spend):
-    if pd.isna(spend) or str(spend).strip() == '':
-        return 0
-    # Remove £ sign, commas and whitespace
-    s = str(spend).replace('£', '').replace(',', '').strip()
-    try:
-        return float(s)
-    except:
-        return 0
-
-df['est_monthly_spend_gbp'] = df['est_monthly_spend_gbp'].apply(clean_spend)
-
-print(f"  Spend figures cleaned")
-
-
-# ============================================================
-# STEP 6: FLAG BROKEN EMAILS
-# ============================================================
-# Some emails have obvious errors like double @ symbols:
-# ines@@hotmail.com or liam@@hotmail.com
-# We flag these rather than delete them so a human can fix them.
-# We never silently drop data, we surface the problem instead.
-
-def flag_email(email):
-    if pd.isna(email) or str(email).strip() == '':
-        return ''
-    e = str(email).strip()
-    # Count @ symbols — a valid email has exactly one
-    if e.count('@') != 1:
-        return f"INVALID: {e}"
-    # Basic format check
-    if not re.match(r'^[^@]+@[^@]+\.[^@]+$', e):
-        return f"INVALID: {e}"
-    return e
-
-df['email'] = df['email'].apply(flag_email)
-
-invalid_emails = df[df['email'].str.startswith('INVALID:', na=False)]['lead_id'].tolist()
-if invalid_emails:
-    print(f"  Flagged {len(invalid_emails)} invalid emails: {invalid_emails}")
-else:
-    print(f"  No invalid emails found")
-
-
-# ============================================================
-# STEP 7: REMOVE DUPLICATES
-# ============================================================
-# Some leads appear more than once with different lead_IDs.
-# We keep the most recent version of each duplicate based on
-# last_touch_date. If both have no date we keep the first one.
-# We identify duplicates by matching on cleaned handle for
-# resellers and on email for physical shops.
-
-# For resellers: same handle = duplicate
-# For shops: same email = duplicate
-# We also catch exact lead_id duplicates
-
-# First sort by last_touch_date descending so most recent is first
-df['last_touch_date_sort'] = pd.to_datetime(df['last_touch_date'], errors='coerce')
-df = df.sort_values('last_touch_date_sort', ascending=False, na_position='last')
-
-before = len(df)
-
-# Remove exact lead_id duplicates keeping most recent
-df = df.drop_duplicates(subset=['lead_id'], keep='first')
-
-# Remove duplicate handles (for resellers)
-reseller_mask = df['handle'] != ''
-df_resellers = df[reseller_mask].drop_duplicates(subset=['handle'], keep='first')
-df_shops = df[~reseller_mask]
-df = pd.concat([df_resellers, df_shops], ignore_index=True)
-
-# Remove duplicate emails (for shops)
-shop_with_email = df['email'].str.len() > 0
-df_with_email = df[shop_with_email].drop_duplicates(subset=['email'], keep='first')
-df_no_email = df[~shop_with_email]
-df = pd.concat([df_with_email, df_no_email], ignore_index=True)
-
-after = len(df)
-print(f"  Removed {before - after} duplicates ({before} → {after} leads)")
-
-# Drop the sorting helper column
-df = df.drop(columns=['last_touch_date_sort'])
-
-
-# ============================================================
-# STEP 8: CLASSIFY LEAD TYPE
-# ============================================================
-# We classify each lead as reseller or physical_shop based on
-# the actual data in the row, NOT the source label.
-# This is because the source column is inconsistent.
-#
-# The most reliable signal is the reseller metrics columns.
-# followers, active_listings and sales_velocity_30d are ONLY
-# populated for online resellers. Physical shops never have them.
-#
-# If a reseller ALSO has an email we flag them as
-# reseller_with_email because they can be contacted two ways.
-
-def classify_lead(row):
-    has_followers = pd.notna(row['followers']) and str(row['followers']).strip() not in ['', '0', 'nan']
-    has_velocity = pd.notna(row['sales_velocity_30d']) and str(row['sales_velocity_30d']).strip() not in ['', '0', 'nan']
-    has_email = pd.notna(row['email']) and str(row['email']).strip() != '' and not str(row['email']).startswith('INVALID')
-    has_handle = pd.notna(row['handle']) and str(row['handle']).strip() != ''
-
-    if has_followers or has_velocity:
-        if has_email:
-            return 'reseller_with_email'
-        return 'reseller'
-    else:
-        return 'physical_shop'
-
-df['lead_type'] = df.apply(classify_lead, axis=1)
-
-type_counts = df['lead_type'].value_counts()
-print(f"  Lead types: {dict(type_counts)}")
-
-
-# ============================================================
-# STEP 9: STAGE RECONCILIATION — ADDED AFTER TESTING
-# ============================================================
-# This step was added after a critical finding during testing.
-#
-# When the visual deal pipeline was built and the data loaded,
-# leads were spotted in the Lost column with Hot reply badges
-# on them. Clicking into them revealed last messages like:
-# "do you ship to EU" and "what brands do you carry" —
-# genuine buying signals, not dead leads.
-#
-# What had happened: previous BDRs had marked leads as Lost
-# without reading what the lead actually said last. The stage
-# label in the CRM did not reflect the reality of the conversation.
-#
-# The fix: cross-check every Lost lead against their last inbound
-# message. If the message contradicts the Lost stage, override it.
-#
-# The logic:
-# Lost + hot reply (buying signal) → override to Replied, flag
-# Lost + warm reply (objection/timing) → override to Hold, flag
-# Lost + no message OR explicit hard no → keep as Lost
-#
-# This means the tool catches commercial errors made by previous
-# reps, not just formatting errors in the data.
-
-# ============================================================
-# SIGNAL CLASSIFICATION — THREE LAYER APPROACH
-# ============================================================
-# Built to scale from 265 leads to 30,000+
-#
-# LAYER 1: Exact matches for all 25 known messages in this pipeline
-# Zero ambiguity — every known message maps to exactly one bucket
-# Based on manual review of every unique last_inbound_text
-#
-# LAYER 2: Keyword patterns for new messages not seen before
-# Catches variations like "yeah sounds great when can we chat"
-# even if that exact phrase is not in Layer 1
-#
-# LAYER 3: Claude API fallback for anything that does not match
-# Any genuinely unknown message gets classified by AI
-# One API call per unknown message — scales automatically
-#
-# THE BUCKETS (agreed after reviewing all 25 messages):
-# MEETING BOOKED: specific day, time or clear call/visit commitment
-# REPLIED HOT:    buying signal or question, act today
-# REPLIED WARM:   replied but needs handling, not urgent
-# HOLD:           timing issue or soft no, follow up later
-# LOST:           explicit hard no only
-
-# ---------------------------------------------------------------
-# LAYER 1: EXACT MATCHES
-# All 25 unique messages from this pipeline classified manually
-# ---------------------------------------------------------------
-
-EXACT_MEETING = [
-    'happy to chat, mornings best.',
-    'sure, pop in on thursday.',
-    'can you do a call fri?',
-    'ok sounds good when can we talk',
-]
-
-EXACT_HOT = [
-    'interested - send pricing.',
-    'thanks, can you email a one-pager?',
-    "what's the fee structure?",
-    'do you ship to eu?',
-    'do you take menswear too',
-    'how does payout work',
-    'how much for the whole bundle?',
-    'interested but busy this week',
-    'send me the bundle list',
-    'what brands do you take?',
-    'whats the catch lol',
-    'whats your commission?',
-    'yeah keen, drop details',
-]
-
-EXACT_WARM = [
-    'owner is back next week, call then.',
-    'we already sell on vinted.',
-    'already on another platform tbh',
-    'need to think about it',
-]
-
-EXACT_HOLD = [
-    'not taking on new channels currently.',
-    'too busy this season, try later.',
-    'maybe next month',
-    'not interested right now',
-]
-
-EXACT_LOST = []
-
-# ---------------------------------------------------------------
-# LAYER 2: KEYWORD PATTERNS
-# For new messages not seen before — catches variations
-# Order matters: LOST first, then MEETING, then HOLD, then WARM, then HOT
-# ---------------------------------------------------------------
-
-LOST_KEYWORDS = [
-    'stop messaging', 'stop contacting', 'remove me',
-    'unsubscribe', 'do not contact', 'please stop',
-    'leave us alone', 'never contact', 'not for us ever',
-]
-
-MEETING_KEYWORDS = [
-    'pop in', 'mornings best', 'afternoons best', 'evenings best',
-    'thursday', 'friday', 'monday', 'tuesday', 'wednesday', 'saturday',
-    'morning works', 'afternoon works', 'can we meet', 'lets meet',
-    "let's meet", 'can you do a call', 'do a call', 'schedule a call',
-    'book a call', 'hop on a call', 'jump on a call',
-    'when are you free', 'what time works', 'ok sounds good',
-    'sounds good, when',
-]
-
-HOLD_KEYWORDS = [
-    'too busy', 'busy season', 'next month', 'next quarter',
-    'try again', 'try later', 'come back', 'check back',
-    'not right now', 'not at the moment', 'not currently',
-    'slow season', 'quiet period', 'not interested',
-    'dont think', "don't think", 'not for us',
-    'not what we need', 'not looking for',
-]
-
-WARM_KEYWORDS = [
-    'vinted', 'already sell', 'we sell on', 'already on another',
-    'another platform', 'already use', 'not taking on',
-    'already have a supplier', 'need to think', 'think about it',
-    'not sure yet', 'maybe', 'perhaps',
-]
-
-HOT_KEYWORDS = [
-    'fee structure', 'commission', 'payout', 'how does it work',
-    'what brands', 'do you ship', 'do you take', 'menswear',
-    'womenswear', 'how much', 'bundle', 'catalogue', 'catalog',
-    'minimum order', 'moq', 'sample', 'pricing', 'price list',
-    'yeah keen', 'sounds good', 'interested', 'send me',
-    'drop details', 'tell me more', 'more info',
-    'whats the catch', "what's the catch",
-    'one-pager', 'brochure', 'overview',
-    'busy this week', 'busy today', 'busy tomorrow',
-]
-
-# ---------------------------------------------------------------
-# LAYER 3: CLAUDE API FALLBACK
-# Unknown messages get classified by AI — never miss a lead
-# ---------------------------------------------------------------
-
-def classify_with_api(message):
-    try:
-        import anthropic
-        client = anthropic.Anthropic()
-        response = client.messages.create(
-            model='claude-sonnet-4-6',
-            max_tokens=10,
-            system="""You classify sales messages into exactly one category.
-Reply with only the category name, nothing else.
-
-MEETING_BOOKED - specific day, time or clear call/visit commitment
-REPLIED_HOT - buying signal or product question, act today
-REPLIED_WARM - replied but needs careful handling, not urgent
-HOLD - timing issue or soft no, follow up in 30 days
-LOST - explicit hard no, stop messaging
-
-Context: Messages from vintage clothing resellers responding to
-outreach from Fleek, a B2B vintage wholesale marketplace.""",
-            messages=[{'role': 'user', 'content': f'Classify: "{message}"'}]
-        )
-        return response.content[0].text.strip()
-    except:
-        return 'REPLIED_HOT'
-
-def classify_message(msg):
-    """
-    Three layer classification.
-    Returns (stage, reply_type, layer_used)
-
-    Reply types:
-    - hot:   buying signal, act today
-    - warm:  objection or timing, needs handling
-    - amber: no message at all — we do not know where they stand
-    - none:  new lead, no contact yet
-    - cold:  hard no
-    """
-    if not msg or str(msg).strip().strip("'`\"") in ['', 'nan']:
-        return None, 'amber', 0  # No message = amber, we do not know their intent
-
-    msg_clean = str(msg).strip().lower()
-
-    # Layer 1: Exact matches
-    if msg_clean in [m.lower() for m in EXACT_MEETING]:
-        return 'Meeting Booked', 'hot', 1
-    if msg_clean in [m.lower() for m in EXACT_HOT]:
-        return 'Replied', 'hot', 1
-    if msg_clean in [m.lower() for m in EXACT_WARM]:
-        return 'Replied', 'warm', 1
-    if msg_clean in [m.lower() for m in EXACT_HOLD]:
-        return 'Hold', 'warm', 1
-    if msg_clean in [m.lower() for m in EXACT_LOST]:
-        return 'Lost', 'cold', 1
-
-    # Layer 2: Keywords (order: Lost → Meeting → Hold → Warm → Hot)
-    if any(kw in msg_clean for kw in LOST_KEYWORDS):
-        return 'Lost', 'cold', 2
-    if any(kw in msg_clean for kw in MEETING_KEYWORDS):
-        return 'Meeting Booked', 'hot', 2
-    if any(kw in msg_clean for kw in HOLD_KEYWORDS):
-        return 'Hold', 'warm', 2
-    if any(kw in msg_clean for kw in WARM_KEYWORDS):
-        return 'Replied', 'warm', 2
-    if any(kw in msg_clean for kw in HOT_KEYWORDS):
-        return 'Replied', 'hot', 2
-
-    # Layer 3: API fallback
-    api_result = classify_with_api(msg)
-    bucket_map = {
-        'MEETING_BOOKED': ('Meeting Booked', 'hot'),
-        'REPLIED_HOT': ('Replied', 'hot'),
-        'REPLIED_WARM': ('Replied', 'warm'),
-        'HOLD': ('Hold', 'warm'),
-        'LOST': ('Lost', 'cold'),
-    }
-    bucket, reply_type = bucket_map.get(api_result, ('Replied', 'hot'))
-    return bucket, reply_type, 3
-
-# Backward compatibility
-MEETING_SIGNALS = EXACT_MEETING + MEETING_KEYWORDS
-HOT_SIGNALS = EXACT_HOT + HOT_KEYWORDS
-HARD_NOS = LOST_KEYWORDS
-WARM_SIGNALS = EXACT_HOLD + EXACT_WARM + HOLD_KEYWORDS + WARM_KEYWORDS
-
-def reconcile_stage(row):
-    stage = row['stage']
-    # Strip leading apostrophes and handle nan values
-    raw_msg = str(row.get('last_inbound_text', '') or '').strip().strip("'`\"").strip()
-    msg = '' if raw_msg.lower() in ['nan', 'none', ''] else raw_msg.lower()
-    num_touches = int(row.get('num_touches', 0) or 0)
-    spend = float(str(row.get('est_monthly_spend_gbp', 0) or 0).replace('£','').replace(',','') or 0)
-
-    # ============================================================
-    # FULL STAGE RECONCILIATION — REBUILT AFTER PIPELINE REVIEW
-    # ============================================================
-    # The stage labels in the inherited pipeline cannot be trusted.
-    # Three stages were found to be systematically wrong:
-    #
-    # NEGOTIATING: Leads marked Negotiating who had never even
-    # seen pricing. "Interested - send pricing" is not negotiating.
-    # Negotiating is now merged into Replied since there is no
-    # evidence of genuine term negotiation in this pipeline.
-    #
-    # WON: Leads marked Won with last messages like "whats your
-    # commission" and "yeah keen drop details". These are not
-    # closed deals. Previous BDRs marked Won prematurely.
-    #
-    # LOST: Leads marked Lost with active buying signals like
-    # "do you ship to EU" and "how much for the whole bundle".
-    # These are not dead leads, they are unanswered conversations.
-    #
-    # CONTACTED: Leads marked Contacted who had clearly replied
-    # with messages like "Happy to chat, mornings best." That
-    # is not just contacted, that is a meeting being booked.
-    #
-    # The new clean stage structure:
-    # New           — never contacted
-    # Contacted     — reached out, zero reply received
-    # Replied       — any reply received, hot or warm
-    # Meeting Booked — specific time or visit confirmed
-    # Won           — genuinely closed post reconciliation
-    # Hold          — soft no or timing issue, follow up later
-    # Lost          — hard no only, stop messaging
-    #
-    # Negotiating is absorbed into Replied.
-    # ============================================================
-
-    # THE GOLDEN RULE: Last message always wins over stage label.
-    # We check the message against every signal list regardless
-    # of what stage the BDR assigned. This catches cases like:
-    # - "call-booked" with last message "do you ship to EU?" → Replied
-    # - "call-booked" with last message "Too busy this season" → Hold
-    # - "Won" with last message "whats your commission?" → Replied
-    # - "Lost" with last message "yeah keen drop details" → Replied
-
-    # STEP 1: Hard no — only these are truly Lost, override everything
-    if msg and any(phrase in msg for phrase in HARD_NOS):
-        return 'Lost', stage != 'Lost'
-
-    # STEP 2: Warm/Hold signals — override ANY stage including Meeting Booked
-    # "Too busy this season" in call-booked = BDR was wrong → Hold
-    # "We already sell on Vinted" in Negotiating = misunderstanding → Hold
-    if msg and any(phrase in msg for phrase in WARM_SIGNALS):
-        return 'Hold', stage != 'Hold'
-
-    # STEP 3: Meeting confirmed — only after ruling out warm signals
-    # A specific day, time or clear availability given
-    if msg and any(phrase in msg for phrase in MEETING_SIGNALS):
-        return 'Meeting Booked', stage != 'Meeting Booked'
-
-    # STEP 4: Hot signals — buying signal or question → Replied
-    # "do you ship to EU?" in call-booked = BDR was wrong → Replied
-    if msg and any(phrase in msg for phrase in HOT_SIGNALS):
-        return 'Replied', stage != 'Replied'
-
-    # STEP 5: Replied/Warm/Negotiating with NO message
-    # AND New with touches > 0 — both mean contacted but no reply
-    # BDR marked stage without evidence of a real reply.
-    #
-    # num_touches = 0 → New (genuinely never contacted)
-    # num_touches > 0 → Contacted (we reached out, no reply received)
-    if not msg:
-        if stage in ['Replied', 'Warm', 'Negotiating']:
-            # BDR marked replied without getting a reply
-            return ('New' if num_touches == 0 else 'Contacted'), True
-        if stage == 'New' and num_touches > 0:
-            # BDR marked New but touches show we already contacted them
-            return 'Contacted', True
-
-    # STEP 6: Won with no message = keep Won
-    # Won with follow up language = move to Replied
-    if stage == 'Won':
-        if not msg:
-            return 'Won', False
-        follow_up = ['email', 'one-pager', 'send over', 'more info',
-                    'details', 'pricing', 'price', 'how does', 'can you']
-        if any(phrase in msg for phrase in follow_up):
-            return 'Replied', True
-        return 'Won', False
-
-    # STEP 6: Negotiating with no message — merge into Replied
-    if stage == 'Negotiating':
-        return 'Replied', True
-
-    # STEP 7: Lost with blank message — use touches and spend
-    if stage == 'Lost':
-        if not msg:
-            if num_touches <= 1 and spend >= 3000:
-                return 'Hold', True
-            if num_touches >= 5:
-                return 'Lost', False
-            if spend >= 5000 and num_touches <= 4:
-                return 'Hold', True
-            return 'Lost', False
-        if len(msg) > 3:
-            return 'Hold', True
-        return 'Lost', False
-
-    # STEP 8: Contacted with any reply — move to Replied
-    if stage == 'Contacted':
-        if msg and len(msg) > 3:
-            return 'Replied', True
-        return 'Contacted', False
-
-    # STEP 9: Keep everything else as is
-    return stage, False
-
-reconciliation_results = df.apply(
-    lambda row: reconcile_stage(row), axis=1
+uk_shops = uk_shops.sort_values(
+    ['city', 'stage_priority', 'est_monthly_spend_gbp'],
+    ascending=[True, True, False]
 )
-df['stage'] = [r[0] for r in reconciliation_results]
-df['stage_overridden'] = [r[1] for r in reconciliation_results]
 
-# ============================================================
-# ASSIGN REPLY TYPE TO EVERY LEAD — NO GAPS
-# ============================================================
-# Every lead must have a reply type. No lead should be uncategorised.
-# Hot:   buying signal in last message, act today
-# Warm:  objection or timing issue, needs handling
-# Amber: no last message at all — we do not know their intent
-# None:  physical shop (different channel, different logic)
-# Cold:  explicit hard no
+intl_shops = intl_shops.sort_values(
+    ['country', 'city', 'stage_priority', 'est_monthly_spend_gbp'],
+    ascending=[True, True, True, False]
+)
 
-def get_reply_type(row):
-    msg = str(row.get('last_inbound_text', '') or '').strip().strip("'`\"")
-    num_touches = int(str(row.get('num_touches', 0) or 0).strip() or 0)
+def recommend_channel(row):
+    """
+    Full visit booking logic for physical shops.
+    UK shops: email → call → book visit → visit
+    International: email → call → video meeting only
+    Visit is only triggered when justified by stage, intent and spend.
+    Online resellers never appear here — this is physical shops only.
+    """
+    is_uk = str(row.get('country', '')).strip().upper() == 'UK'
+    stage = row['stage']
+    spend = float(str(row.get('est_monthly_spend_gbp', 0) or 0).replace('£','').replace(',','') or 0)
+    reply_type = str(row.get('reply_type', '') or '').strip()
+    obj_type = str(row.get('obj_type', '') or '').strip()
+    last_msg = str(row.get('last_inbound_text', '') or '').lower().strip().replace('nan','')
 
-    # No message — determine if truly new or contacted with no reply
-    # Blue  = num_touches is 0 AND no notes — genuinely never touched
-    # Amber = num_touches > 0 OR has notes — we know something about them
-    #         or we reached out and heard nothing back
-    if not msg or msg.lower() in ['', 'nan']:
-        notes = str(row.get('notes', '') or '').strip()
-        has_notes = notes and notes.lower() not in ['', 'nan']
-        if num_touches == 0 and not has_notes:
-            return 'new'
-        else:
-            return 'amber'
+    # LOST AND HOLD — no visit ever
+    if stage == 'Lost':
+        return 'No contact — hard no received. Do not visit.'
+    if stage == 'Hold':
+        return 'Hold — send content, set reminder. Do not visit yet.'
 
-    stage, reply_type, layer = classify_message(msg)
+    # WON — relationship visit for UK, email check in for international
+    if stage == 'Won':
+        if is_uk:
+            return 'Relationship visit — already a customer. Visit to strengthen account and discuss next order.'
+        return 'Account management — email check in on next order.'
 
-    # -------------------------------------------------------
-    # DATE-BASED URGENCY ADJUSTMENT
-    # -------------------------------------------------------
-    # Commercial rule: hot and warm leads should never go
-    # more than 7 days without contact. If they do the rep
-    # dropped the ball. Surface them as urgent immediately.
-    #
-    # Uses last_touch_date — real data, not a proxy.
-    #
-    # Hot + last_touch within 7 days → Hot, actively worked
-    # Hot + last_touch over 7 days → Hot OVERDUE, chase today
-    # Warm + last_touch within 7 days → Warm, actively worked
-    # Warm + last_touch over 7 days → Upgrade to Hot OVERDUE
-    #   A warm lead ignored for over a week is now urgent
-    #
-    # Goal: turn hot leads into meetings, warm into hot.
-    # 7 days is the maximum gap for any interested lead.
-    # -------------------------------------------------------
-    if reply_type in ['hot', 'warm']:
-        try:
-            # Never upgrade Hold stage leads — they are on Hold for a reason
-            # "not interested right now" stays warm regardless of last_touch_date
-            # The date urgency only applies to genuinely interested leads
-            current_stage = str(row.get('stage', '') or '').strip()
-            if current_stage == 'Hold':
-                pass  # Keep reply_type as is for Hold leads
-            else:
-                last_touch = str(row.get('last_touch_date', '') or '').strip()
-                if last_touch and last_touch.lower() not in ['', 'nan', 'none']:
-                    last_touch_date = pd.to_datetime(last_touch, dayfirst=True, errors='coerce')
-                    if pd.notna(last_touch_date):
-                        days_since = (pd.Timestamp.now() - last_touch_date).days
-                        if days_since > 7:
-                            reply_type = 'hot'
-        except:
-            pass
+    # MEETING BOOKED — confirmed, just show up
+    if stage == 'Meeting Booked':
+        if is_uk:
+            return 'Confirmed visit — time agreed, add to city route. No need to rebook.'
+        return 'Video call confirmed — join at agreed time.'
 
-    return reply_type
-def get_obj_type(row):
-    msg = str(row.get('last_inbound_text', '') or '').strip().strip("'`\"").lower()
-    if not msg or msg == 'nan':
-        return 'none'
-    if any(kw in msg for kw in ['vinted', 'already sell', 'sell on vinted']):
-        return 'misunderstanding'
-    if any(kw in msg for kw in ['another platform', 'already on another']):
-        return 'platform'
-    if any(kw in msg for kw in ['too busy', 'next month', 'try later', 'slow season', 'not right now']):
-        return 'timing'
-    if 'not interested' in msg:
-        return 'soft_no'
-    if any(kw in msg for kw in ['need to think', 'maybe', 'not sure']):
-        return 'undecided'
-    if 'not taking on' in msg:
-        return 'channel_objection'
-    return 'none'
+    # NEGOTIATING — book visit to close
+    if stage == 'Negotiating':
+        if is_uk:
+            return 'Book visit — email to say you will be in the area, then visit in person. Face to face closes deals email cannot.'
+        return 'Call — push to close. Video meeting if possible.'
 
-df['reply_type'] = df.apply(get_reply_type, axis=1)
-df['obj_type'] = df.apply(get_obj_type, axis=1)
+    # REPLIED — visit depends on reply type and objection
+    if stage == 'Replied':
+        if is_uk:
+            if reply_type == 'hot':
+                return 'Book visit — hot reply received, high intent. Email to arrange a time before showing up.'
+            if 'vinted' in last_msg or obj_type == 'misunderstanding':
+                return 'Book visit — Vinted misunderstanding is easier to clear face to face in 2 minutes than over email.'
+            if 'another platform' in last_msg or obj_type == 'platform':
+                return 'Book visit — platform objection is easier to handle in person. Fleek differentiation lands better face to face.'
+            return 'Book visit — warm reply received. Email to arrange before visiting.'
+        return 'Call — warm reply received. Book a video meeting.'
 
-# Print reply type breakdown
-reply_counts = df[df['lead_type'] != 'physical_shop']['reply_type'].value_counts()
-print(f"\nReply type breakdown (resellers only):")
-for rt, count in reply_counts.items():
-    print(f"  {rt}: {count}")
+    # CONTACTED — call first, high spend justifies cold visit
+    if stage == 'Contacted':
+        if is_uk:
+            if spend >= 5000:
+                return f'Book visit — high value account (£{int(spend):,}/mo). Cold visit justified. Email first to say you will be in the area.'
+            return 'Call — follow up on email before visiting.'
+        return 'Call — follow up on email sent.'
 
-overridden = df[df['stage_overridden'] == True]
-hot_recovered = df[(df['stage_overridden'] == True) & (df['stage'] == 'Replied')]
-hold_recovered = df[(df['stage_overridden'] == True) & (df['stage'] == 'Hold')]
+    # NEW — email first, never visit a new cold lead
+    if stage == 'New':
+        if is_uk and spend >= 5000:
+            return 'Email — high value new account. Visit only after they reply.'
+        return 'Email — first contact. Do not visit until they respond.'
 
-if len(overridden) > 0:
-    print(f"\n⚠ Stage reconciliation found {len(overridden)} misclassified leads:")
-    print(f"  {len(hot_recovered)} moved to Replied — had buying signals or open questions")
-    print(f"  {len(hold_recovered)} moved to Hold — had unanswered messages, not hard nos")
-    print(f"  Combined est. monthly spend recovered: £{overridden['est_monthly_spend_gbp'].sum():,.0f}")
-    print(f"  Note: includes Won leads marked closed before the deal was actually done")
-    for _, lead in overridden.iterrows():
-        identifier = lead.get('handle') or lead.get('store_name') or lead.get('lead_id')
-        last_msg = str(lead.get("last_inbound_text",""))[:60]
-        stage_now = lead["stage"]
-        print(f"    -> {identifier} | now: {stage_now} | last said: {last_msg}")
-else:
-    print(f"\n✓ Stage reconciliation: no misclassified Lost leads found")
+    return 'Email — first contact.'
+
+uk_shops['recommended_action'] = uk_shops.apply(recommend_channel, axis=1)
+intl_shops['recommended_action'] = intl_shops.apply(recommend_channel, axis=1)
+
+all_shops_sequenced = pd.concat([uk_shops, intl_shops], ignore_index=True)
+
+print(f"\nUK shop visit plan:")
+uk_city_counts = uk_shops.groupby('city').size()
+for city, count in uk_city_counts.items():
+    neg = len(uk_shops[(uk_shops['city'] == city) & (uk_shops['stage'] == 'Negotiating')])
+    rep = len(uk_shops[(uk_shops['city'] == city) & (uk_shops['stage'] == 'Replied')])
+    print(f"  {city}: {count} shops ({neg} negotiating, {rep} warm)")
+
+print(f"\nInternational (email/call only): {len(intl_shops)}")
 
 
 # ============================================================
-# STEP 10: SAVE THE CLEAN FILE
+# SAVE OUTPUT FILES
 # ============================================================
-# We output a clean CSV file. CSV is a simple text format that
-# any tool can read. This becomes the input for every step
-# that follows. Think of it as the clean version of the data
-# that the rest of the pipeline runs on.
 
-output_file = 'pipeline_clean.csv'
-df.to_csv(output_file, index=False)
+reseller_cols = ['lead_id', 'handle', 'contact_name', 'stage',
+                 'followers', 'sales_velocity_30d', 'est_monthly_spend_gbp',
+                 'last_touch_date', 'last_inbound_text', 'priority_score',
+                 'why_today', 'reply_type', 'follow_up_timing',
+                 'objection_type', 'recommended_response', 'lead_type',
+                 'email', 'notes']
 
-print(f"\n✓ Clean pipeline saved to {output_file}")
-print(f"  Total leads: {len(df)}")
-print(f"  Resellers: {len(df[df['lead_type'] == 'reseller'])}")
-print(f"  Resellers with email: {len(df[df['lead_type'] == 'reseller_with_email'])}")
-print(f"  Physical shops: {len(df[df['lead_type'] == 'physical_shop'])}")
-print(f"\nStep 1 complete. Ready for Step 2: Prioritisation.")
+shop_cols = ['lead_id', 'store_name', 'contact_name', 'email', 'phone',
+             'city', 'country', 'stage', 'est_monthly_spend_gbp',
+             'last_touch_date', 'last_inbound_text', 'recommended_action',
+             'assigned_bdr', 'notes']
+
+reseller_cols = [c for c in reseller_cols if c in todays_resellers.columns]
+shop_cols = [c for c in shop_cols if c in all_shops_sequenced.columns]
+
+todays_resellers[reseller_cols].to_csv('todays_resellers.csv', index=False)
+all_shops_sequenced[shop_cols].to_csv('todays_shops.csv', index=False)
+
+print(f"\n✓ Saved todays_resellers.csv — {len(todays_resellers)} resellers to DM today")
+print(f"✓ Saved todays_shops.csv — {len(all_shops_sequenced)} shops sequenced")
+print(f"\nStep 2 complete. Ready for Step 3: Message drafting.")
