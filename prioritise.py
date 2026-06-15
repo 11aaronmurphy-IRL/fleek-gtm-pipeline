@@ -511,24 +511,71 @@ intl_shops = intl_shops.sort_values(
 )
 
 def recommend_channel(row):
+    """
+    Full visit booking logic for physical shops.
+    UK shops: email → call → book visit → visit
+    International: email → call → video meeting only
+    Visit is only triggered when justified by stage, intent and spend.
+    Online resellers never appear here — this is physical shops only.
+    """
     is_uk = str(row.get('country', '')).strip().upper() == 'UK'
     stage = row['stage']
+    spend = float(str(row.get('est_monthly_spend_gbp', 0) or 0).replace('£','').replace(',','') or 0)
+    reply_type = str(row.get('reply_type', '') or '').strip()
+    obj_type = str(row.get('obj_type', '') or '').strip()
+    last_msg = str(row.get('last_inbound_text', '') or '').lower().strip().replace('nan','')
+
+    # LOST AND HOLD — no visit ever
+    if stage == 'Lost':
+        return 'No contact — hard no received. Do not visit.'
+    if stage == 'Hold':
+        return 'Hold — send content, set reminder. Do not visit yet.'
+
+    # WON — relationship visit for UK, email check in for international
+    if stage == 'Won':
+        if is_uk:
+            return 'Relationship visit — already a customer. Visit to strengthen account and discuss next order.'
+        return 'Account management — email check in on next order.'
+
+    # MEETING BOOKED — confirmed, just show up
+    if stage == 'Meeting Booked':
+        if is_uk:
+            return 'Confirmed visit — time agreed, add to city route. No need to rebook.'
+        return 'Video call confirmed — join at agreed time.'
+
+    # NEGOTIATING — book visit to close
+    if stage == 'Negotiating':
+        if is_uk:
+            return 'Book visit — email to say you will be in the area, then visit in person. Face to face closes deals email cannot.'
+        return 'Call — push to close. Video meeting if possible.'
+
+    # REPLIED — visit depends on reply type and objection
+    if stage == 'Replied':
+        if is_uk:
+            if reply_type == 'hot':
+                return 'Book visit — hot reply received, high intent. Email to arrange a time before showing up.'
+            if 'vinted' in last_msg or obj_type == 'misunderstanding':
+                return 'Book visit — Vinted misunderstanding is easier to clear face to face in 2 minutes than over email.'
+            if 'another platform' in last_msg or obj_type == 'platform':
+                return 'Book visit — platform objection is easier to handle in person. Fleek differentiation lands better face to face.'
+            return 'Book visit — warm reply received. Email to arrange before visiting.'
+        return 'Call — warm reply received. Book a video meeting.'
+
+    # CONTACTED — call first, high spend justifies cold visit
+    if stage == 'Contacted':
+        if is_uk:
+            if spend >= 5000:
+                return f'Book visit — high value account (£{int(spend):,}/mo). Cold visit justified. Email first to say you will be in the area.'
+            return 'Call — follow up on email before visiting.'
+        return 'Call — follow up on email sent.'
+
+    # NEW — email first, never visit a new cold lead
     if stage == 'New':
-        return 'Email — first contact'
-    elif stage == 'Contacted':
-        return 'Call — follow up on email'
-    elif stage == 'Replied':
-        return 'Visit in person' if is_uk else 'Call — book a video meeting'
-    elif stage == 'Meeting Booked':
-        return 'Visit — confirmed, add to route' if is_uk else 'Video call — confirmed'
-    elif stage == 'Negotiating':
-        return 'Visit — close it in person' if is_uk else 'Call — push to close'
-    elif stage == 'Lost':
-        return 'Hold — check back in 60 days'
-    elif stage == 'Won':
-        return 'Account management — onboarding'
-    else:
-        return 'Email — first contact'
+        if is_uk and spend >= 5000:
+            return 'Email — high value new account. Visit only after they reply.'
+        return 'Email — first contact. Do not visit until they respond.'
+
+    return 'Email — first contact.'
 
 uk_shops['recommended_action'] = uk_shops.apply(recommend_channel, axis=1)
 intl_shops['recommended_action'] = intl_shops.apply(recommend_channel, axis=1)
