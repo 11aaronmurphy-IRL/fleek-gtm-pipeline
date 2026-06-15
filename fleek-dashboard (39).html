@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fleek GTM Pipeline Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;background:#f5f5f3;min-height:100vh;}
+  .topbar{background:#0d0d0d;padding:20px 32px 0;position:sticky;top:0;z-index:100;}
+  .topbar-inner{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+  .brand{color:#fff;font-size:10px;letter-spacing:4px;opacity:0.4;}
+  .title{color:#fff;font-size:22px;font-weight:600;margin-top:4px;}
+  .stats-row{display:flex;gap:28px;}
+  .stat-num{font-size:24px;font-weight:600;line-height:1;}
+  .stat-label{font-size:9px;letter-spacing:2px;opacity:0.4;margin-top:3px;color:#fff;}
+  .tabs{display:flex;gap:2px;}
+  .tab{padding:11px 22px;font-size:13px;font-weight:400;font-family:inherit;background:transparent;color:#666;border:none;border-radius:8px 8px 0 0;cursor:pointer;transition:all 0.15s;}
+  .tab.active{background:#f5f5f3;color:#111;font-weight:500;}
+  .tab:hover:not(.active){color:#999;}
+  .content{padding:24px 32px;max-width:1200px;margin:0 auto;}
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:20px;}
+  .metric{background:#fff;border-radius:10px;padding:14px 16px;border:0.5px solid #e5e5e5;}
+  .metric-num{font-size:26px;font-weight:600;}
+  .metric-label{font-size:11px;color:#888;margin-top:3px;}
+  .red{color:#dc2626;}.amber{color:#d97706;}.green{color:#16a34a;}.blue{color:#2563eb;}
+  .section-label{font-size:10px;letter-spacing:2px;color:#999;margin-bottom:10px;font-weight:500;}
+  .card{background:#fff;border:0.5px solid #e5e5e5;border-radius:12px;padding:14px 16px;margin-bottom:8px;transition:border-color 0.15s;}
+  .card:hover{border-color:#bbb;}
+  .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+  .lead-name{font-size:14px;font-weight:500;color:#111;}
+  .lead-sub{font-size:11px;color:#888;margin-top:3px;}
+  .score{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;flex-shrink:0;}
+  .s-hot{background:#fef2f2;color:#dc2626;border:1.5px solid #dc2626;}
+  .s-warm{background:#fffbeb;color:#d97706;border:1.5px solid #d97706;}
+  .s-qual{background:#f9fafb;color:#6b7280;border:1.5px solid #d1d5db;}
+  .badge{display:inline-block;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:500;margin-right:4px;}
+  .b-hot{background:#fef2f2;color:#dc2626;}
+  .b-warm{background:#fffbeb;color:#d97706;}
+  .b-new{background:#eff6ff;color:#2563eb;}
+  .b-flag{background:#fef2f2;color:#dc2626;}
+  .b-ok{background:#f0fdf4;color:#16a34a;}
+  .b-amber{background:#fff7ed;color:#c2410c;}
+  .b-new-lead{background:#eff6ff;color:#1d4ed8;}
+  .b-intl{background:#f9fafb;color:#6b7280;}
+  .msgbox{background:#f9f9f7;border-radius:8px;padding:12px 14px;font-size:12px;color:#555;line-height:1.7;margin-top:10px;border-left:3px solid #ddd;white-space:pre-wrap;}
+  .expand-btn{background:none;border:none;cursor:pointer;font-size:11px;color:#2563eb;font-family:inherit;padding:4px 0;margin-top:4px;}
+  .expand-btn:hover{text-decoration:underline;}
+  .filter-row{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;}
+  .fbtn{font-size:11px;padding:5px 12px;border-radius:20px;border:0.5px solid #ddd;background:#fff;cursor:pointer;color:#666;font-family:inherit;transition:all 0.15s;}
+  .fbtn.active{background:#0d0d0d;color:#fff;border-color:#0d0d0d;}
+  .fbtn:hover:not(.active){border-color:#999;}
+  .search{width:100%;padding:9px 13px;border:0.5px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit;background:#fff;margin-bottom:12px;}
+  .search:focus{outline:none;border-color:#666;}
+  .city-hdr{font-size:13px;font-weight:500;padding:12px 0 8px;border-top:0.5px solid #e5e5e5;margin-top:8px;display:flex;justify-content:space-between;align-items:center;}
+  .city-hdr:first-child{border-top:none;margin-top:0;padding-top:0;}
+  .city-count{font-size:11px;color:#999;}
+  .upload-zone{border:2px dashed #ddd;border-radius:12px;padding:48px 32px;text-align:center;cursor:pointer;transition:all 0.2s;background:#fff;}
+  .upload-zone:hover{border-color:#666;background:#f9f9f9;}
+  .upload-zone input{display:none;}
+  .upload-icon{font-size:40px;margin-bottom:12px;}
+  .upload-title{font-size:16px;font-weight:500;color:#111;margin-bottom:6px;}
+  .upload-sub{font-size:13px;color:#888;}
+  .progress{text-align:center;padding:40px;color:#666;font-size:14px;}
+  .stagebar{display:flex;gap:3px;height:8px;border-radius:4px;overflow:hidden;margin-bottom:12px;}
+  .stage-legend{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;}
+  .stage-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#666;}
+  .stage-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+  .flow-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}
+  .flow-step{background:#fff;border-radius:10px;padding:14px 16px;border-left:3px solid #0d0d0d;border-top:0.5px solid #e5e5e5;border-right:0.5px solid #e5e5e5;border-bottom:0.5px solid #e5e5e5;}
+  .flow-num{font-size:18px;font-weight:600;color:#0d0d0d;}
+  .flow-title{font-size:12px;font-weight:500;margin-top:3px;}
+  .flow-desc{font-size:11px;color:#888;margin-top:5px;line-height:1.6;}
+  .empty{text-align:center;padding:48px;color:#999;font-size:13px;}
+  .signal-tag{font-size:11px;color:#999;font-style:italic;margin-top:4px;}
+  .tab-content{display:none;}
+  .tab-content.active{display:block;}
+  .channel-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;}
+  .dup-card{border-left:3px solid #dc2626;}
+  .new-card{border-left:3px solid #16a34a;}
+  .copy-btn{font-size:10px;padding:3px 8px;border-radius:6px;border:0.5px solid #ddd;background:#fff;cursor:pointer;color:#666;font-family:inherit;margin-left:8px;}
+  .copy-btn:hover{background:#f5f5f5;}
+  @media(max-width:768px){.flow-grid{grid-template-columns:1fr 1fr;}.channel-grid{grid-template-columns:1fr;}.stats-row{gap:16px;}.content{padding:16px;}}
+  .kanban-board{display:flex;gap:12px;overflow-x:auto;padding-bottom:16px;min-height:70vh;}
+  .kanban-col{flex:0 0 200px;background:#f0f0ee;border-radius:12px;padding:12px;}
+  .kanban-col-header{font-size:11px;font-weight:600;letter-spacing:1px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;}
+  .kanban-count{font-size:11px;background:#fff;border-radius:10px;padding:1px 7px;font-weight:600;}
+  .kanban-card{background:#fff;border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:grab;border:0.5px solid #e5e5e5;transition:box-shadow 0.15s;}
+  .kanban-card:hover{box-shadow:0 2px 8px rgba(0,0,0,0.1);}
+  .kanban-card.dragging{opacity:0.5;cursor:grabbing;}
+  .kanban-col.drag-over{background:#e5e5e3;outline:2px dashed #999;}
+  .k-name{font-size:12px;font-weight:500;color:#111;margin-bottom:3px;}
+  .k-sub{font-size:10px;color:#999;}
+  .k-spend{font-size:11px;font-weight:600;color:#111;margin-top:4px;}
+  .k-badge{display:inline-block;font-size:9px;padding:1px 6px;border-radius:8px;margin-top:3px;}
+  .col-new{border-top:3px solid #7c3aed;}
+  .col-contacted{border-top:3px solid #d97706;}
+  .col-replied{border-top:3px solid #ef4444;}
+  .col-meeting{border-top:3px solid #2563eb;}
+  .col-negotiating{border-top:3px solid #0d0d0d;}
+  .col-won{border-top:3px solid #16a34a;}
+  .col-hold{border-top:3px solid #f97316;}
+  .col-lost{border-top:3px solid #9ca3af;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <div class="brand">FLEEK — GTM ACQUISITION PIPELINE</div>
+      <div class="title">Sales Dashboard</div>
+    </div>
+    <div class="stats-row">
+      <div class="stat"><div class="stat-num" id="s-total" style="color:#fff">—</div><div class="stat-label">TOTAL LEADS</div></div>
+      <div class="stat"><div class="stat-num" id="s-dms" style="color:#ef4444">—</div><div class="stat-label">TODAY'S DMs</div></div>
+      <div class="stat"><div class="stat-num" id="s-shops" style="color:#4ade80">—</div><div class="stat-label">SHOPS</div></div>
+      <div class="stat"><div class="stat-num" id="s-neg" style="color:#facc15">—</div><div class="stat-label">NEGOTIATING</div></div>
+    </div>
+  </div>
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('overview')">Overview</button>
+    <button class="tab" onclick="showTab('resellers')">Top 40 DMs</button>
+    <button class="tab" onclick="showTab('shops')">Shop Sequencer</button>
+    <button class="tab" onclick="showTab('batch')">Day 2 Batch</button>
+    <button class="tab" onclick="showTab('kanban')">Deal Pipeline</button>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- OVERVIEW TAB -->
+  <div id="tab-overview" class="tab-content active">
+    <div id="upload-area" style="margin-top:24px;">
+      <label class="upload-zone" id="upload-zone">
+        <input type="file" id="file-input" accept=".xlsx,.xls" onchange="handleFile(this)">
+        <div class="upload-icon">📊</div>
+        <div class="upload-title">Upload your pipeline Excel file</div>
+        <div class="upload-sub">Fleek_-_Acquisition_Case_Study_-_Pipeline_Data.xlsx</div>
+        <div class="upload-sub" style="margin-top:8px;font-size:11px;color:#bbb;">Click to browse or drag and drop</div>
+      </label>
+      <div id="upload-progress" class="progress" style="display:none;">⏳ Processing your pipeline data...</div>
+    </div>
+
+    <div id="overview-content" style="display:none;margin-top:24px;">
+      <div class="flow-grid">
+        <div class="flow-step"><div class="flow-num">01</div><div class="flow-title">Clean the data</div><div class="flow-desc" id="f1-desc">—</div></div>
+        <div class="flow-step"><div class="flow-num">02</div><div class="flow-title">Classify leads</div><div class="flow-desc" id="f2-desc">—</div></div>
+        <div class="flow-step"><div class="flow-num">03</div><div class="flow-title">Prioritise top 40</div><div class="flow-desc" id="f3-desc">—</div></div>
+        <div class="flow-step"><div class="flow-num">04</div><div class="flow-title">Draft messages</div><div class="flow-desc">Claude reads last reply and applies commercial logic. Buying signal = book a call with specific times. Objection = handle it directly. Soft no = send content and set reminder.</div></div>
+      </div>
+      <div class="metrics" id="overview-metrics"></div>
+      <div class="section-label">PIPELINE BY STAGE</div>
+      <div class="stagebar" id="stage-bar"></div>
+      <div class="stage-legend" id="stage-legend"></div>
+      <div class="channel-grid">
+        <div class="card"><div style="font-size:13px;font-weight:500;margin-bottom:8px;">📱 Online Resellers</div><div style="font-size:12px;color:#666;line-height:1.7;" id="reseller-summary">—</div></div>
+        <div class="card"><div style="font-size:13px;font-weight:500;margin-bottom:8px;">🏪 Physical Shops</div><div style="font-size:12px;color:#666;line-height:1.7;" id="shop-summary">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOP 40 TAB -->
+  <div id="tab-resellers" class="tab-content" style="margin-top:24px;">
+    <div id="resellers-empty" class="empty">Upload your Excel file on the Overview tab first.</div>
+    <div id="resellers-content" style="display:none;">
+      <div class="metrics" id="reseller-metrics"></div>
+      <input class="search" type="text" placeholder="Search handle or last message..." id="r-search" oninput="renderResellers()">
+      <div class="filter-row" id="r-filters">
+        <button class="fbtn active" onclick="setFilter('r','all',this)">All 40</button>
+        <button class="fbtn" onclick="setFilter('r','hot',this)">🔥 Hot replies</button>
+        <button class="fbtn" onclick="setFilter('r','warm',this)">Warm replies</button>
+        <button class="fbtn" onclick="setFilter('r','amber',this)">🟠 Not replied yet</button>
+        <button class="fbtn" onclick="setFilter('r','new',this)">🔵 Not contacted yet</button>
+        <button class="fbtn" onclick="setFilter('r','email',this)">Has email</button>
+      </div>
+      <div class="section-label">INTENT FIRST, WHALE SECOND — TOP 40 FOR TODAY</div>
+      <div id="reseller-list"></div>
+    </div>
+  </div>
+
+  <!-- SHOP SEQUENCER TAB -->
+  <div id="tab-shops" class="tab-content" style="margin-top:24px;">
+    <div id="shops-empty" class="empty">Upload your Excel file on the Overview tab first.</div>
+    <div id="shops-content" style="display:none;">
+      <div class="metrics" id="shop-metrics"></div>
+      <div class="filter-row" id="s-filters">
+        <button class="fbtn active" onclick="setFilter('s','all',this)">All shops</button>
+        <button class="fbtn" onclick="setFilter('s','uk',this)">🇬🇧 UK only</button>
+        <button class="fbtn" onclick="setFilter('s','intl',this)">🌍 International</button>
+        <button class="fbtn" onclick="setFilter('s','negotiating',this)">Negotiating</button>
+        <button class="fbtn" onclick="setFilter('s','visit',this)">Visit today</button>
+      </div>
+      <div class="section-label">SHOPS GROUPED BY CITY — SORTED BY STAGE PRIORITY AND COMMERCIAL VALUE</div>
+      <div id="shop-list"></div>
+    </div>
+  </div>
+
+  <!-- DAY 2 BATCH TAB -->
+  <div id="tab-batch" class="tab-content" style="margin-top:24px;">
+    <div id="batch-empty" class="empty">Upload your Excel file on the Overview tab first.</div>
+    <div id="batch-content" style="display:none;">
+      <div class="metrics" id="batch-metrics"></div>
+      <div class="section-label">5-WAY DUPLICATE DETECTION</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:20px;">
+        <div class="flow-step"><div class="flow-title" style="font-size:11px;">Lead ID</div><div class="flow-desc">Exact match on unique identifier</div></div>
+        <div class="flow-step"><div class="flow-title" style="font-size:11px;">Handle</div><div class="flow-desc">Strips @, URL prefix, lowercases before comparing</div></div>
+        <div class="flow-step"><div class="flow-title" style="font-size:11px;">Email</div><div class="flow-desc">Fixes broken emails like ines@@hotmail first</div></div>
+        <div class="flow-step"><div class="flow-title" style="font-size:11px;">Phone</div><div class="flow-desc">Strips +44, 0044, spaces before comparing</div></div>
+        <div class="flow-step"><div class="flow-title" style="font-size:11px;">Store + city</div><div class="flow-desc">Same shop entered twice by different BDRs</div></div>
+      </div>
+      <div class="section-label">FLAGGED DUPLICATES — NOT ADDED TO PIPELINE</div>
+      <div id="dup-list"></div>
+      <div class="section-label" style="margin-top:20px;">NEW LEADS ADDED TO PIPELINE</div>
+      <div id="new-list"></div>
+    </div>
+  </div>
+
+
+  <!-- KANBAN TAB -->
+  <div id="tab-kanban" class="tab-content" style="margin-top:24px;">
+    <div id="kanban-empty" class="empty">Upload your Excel file on the Overview tab first.</div>
+    <div id="kanban-content" style="display:none;">
+      <div style="margin-bottom:16px;">
+        <div style="font-size:13px;font-weight:500;margin-bottom:4px;">Deal Lifecycle — Drag cards between stages to update</div>
+        <div style="font-size:12px;color:#888;">Each card shows the lead name, type, and estimated monthly spend on wholesale stock. <strong>Note: spend is a rough indicator of commercial potential, not a confirmed deal size.</strong> A reseller spending £9,000/mo on stock across all suppliers is a higher priority target than one spending £120/mo — even before we know what percentage Fleek can win.</div>
+      </div>
+      <div class="kanban-board" id="kanban-board"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let state = {leads:[],resellers:[],shops:[],top40:[],dupes:[],newLeads:[],rFilter:'all',sFilter:'all',expanded:{}};
+
+const STAGE_MAP={'new':'New','new lead':'New','new_lead':'New','contacted':'Contacted','contact':'Contacted','no response':'Contacted','replied':'Replied','reply':'Replied','warm':'Replied','warm lead':'Replied','call booked':'Meeting Booked','call-booked':'Meeting Booked','call_booked':'Meeting Booked','negotiating':'Negotiating','in negotiation':'Negotiating','negotiation':'Negotiating','won':'Won','closed won':'Won',
+// Hold = soft rejection, timing issue, needs follow up later. NOT the same as Lost.
+'ghosted':'Hold','no reply':'Hold','not interested':'Hold','hold':'Hold','on hold':'Hold','follow up':'Hold',
+// Lost = only explicit hard no, stop messaging me, remove me
+'lost':'Lost','hard no':'Lost','remove':'Lost'};
+const STAGE_COLORS={'Replied':'#ef4444','Contacted':'#d97706','Won':'#16a34a','Negotiating':'#0d0d0d','Lost':'#9ca3af','Hold':'#f97316','Meeting Booked':'#2563eb','New':'#7c3aed'};
+const STAGE_PRIORITY={'Negotiating':1,'Meeting Booked':2,'Replied':3,'Contacted':4,'New':5,'Lost':6,'Won':7};
+
+function cleanHandle(h){if(!h)return '';h=String(h).trim().toLowerCase();h=h.replace('https://www.instagram.com/','').replace('instagram.com/','');h=h.replace(/^@/,'');return h.trim();}
+function cleanStage(s){if(!s)return 'New';return STAGE_MAP[String(s).trim().toLowerCase()]||'New';}
+
+// Stage reconciliation — mirrors the logic in clean_pipeline.py
+// Added after spotting leads in Lost column with hot reply badges during visual testing
+// Aaron: nothing is dead unless they say a hard no
+
+
+// Follow up signals — deal not actually closed if last message contains these
+// THREE LAYER CLASSIFICATION SYSTEM
+// Layer 1: Exact matches for all 25 known messages in this pipeline
+// Layer 2: Keyword patterns for new messages we have not seen before  
+// Layer 3: API fallback (Python only) — dashboard defaults to Replied Hot
+
+const EXACT_MEETING=[
+  'happy to chat, mornings best.',
+  'sure, pop in on thursday.',
+  'can you do a call fri?',
+  'ok sounds good when can we talk',
+];
+const EXACT_HOT=[
+  'interested - send pricing.','thanks, can you email a one-pager?',
+  "what's the fee structure?",'do you ship to eu?',
+  'do you take menswear too','how does payout work',
+  'how much for the whole bundle?','interested but busy this week',
+  'send me the bundle list','what brands do you take?',
+  'whats the catch lol','whats your commission?','yeah keen, drop details',
+];
+const EXACT_WARM=[
+  'owner is back next week, call then.',
+  'we already sell on vinted.',
+  'already on another platform tbh',
+  'need to think about it',
+];
+const EXACT_HOLD=[
+  'not taking on new channels currently.',
+  'too busy this season, try later.',
+  'maybe next month','not interested right now',
+];
+
+const LOST_KEYWORDS=['stop messaging','stop contacting','remove me',
+  'unsubscribe','do not contact','please stop','leave us alone',
+  'never contact','not for us ever'];
+const MEETING_KEYWORDS=['pop in','mornings best','afternoons best',
+  'thursday','friday','monday','tuesday','wednesday','saturday',
+  'morning works','afternoon works','can we meet','lets meet',
+  "let's meet",'can you do a call','do a call','schedule a call',
+  'book a call','when are you free','what time works','ok sounds good'];
+const HOLD_KEYWORDS=['too busy','busy season','next month','next quarter',
+  'try later','not right now','not at the moment','not currently',
+  'slow season','not interested',"don't think",'not for us',
+  'not what we need','not looking for'];
+const WARM_KEYWORDS=['vinted','already sell','we sell on','already on another',
+  'another platform','already use','not taking on',
+  'need to think','think about it','not sure yet'];
+const HOT_KEYWORDS=['fee structure','commission','payout','how does it work',
+  'what brands','do you ship','do you take','menswear','womenswear',
+  'how much','bundle','catalogue','catalog','minimum order','moq',
+  'sample','pricing','price list','yeah keen','interested','send me',
+  'drop details','tell me more','more info','whats the catch',
+  "what's the catch",'one-pager','busy this week'];
+
+// Backward compat refs used in reconcileStage
+const MEETING_SIGNALS=[...EXACT_MEETING,...MEETING_KEYWORDS];
+const HOT_SIGNALS=[...EXACT_HOT,...HOT_KEYWORDS];
+const HOT_SIGNALS_EXTRA=[];
+const WARM_SIGNALS=[...EXACT_HOLD,...EXACT_WARM,...HOLD_KEYWORDS,...WARM_KEYWORDS];
+const HARD_NOS=LOST_KEYWORDS;
+
+function classifyMessage(msg){
+  if(!msg) return {stage:null,type:'none',layer:0};
+  // Strip leading/trailing apostrophes and quotes — raw data sometimes has these
+  const m=String(msg).trim().replace(/^['"`]+|['"`]+$/g,'').toLowerCase();
+  if(EXACT_MEETING.some(p=>m===p.toLowerCase())) return {stage:'Meeting Booked',type:'hot',layer:1};
+  if(EXACT_HOT.some(p=>m===p.toLowerCase())) return {stage:'Replied',type:'hot',layer:1};
+  if(EXACT_WARM.some(p=>m===p.toLowerCase())) return {stage:'Replied',type:'warm',layer:1};
+  if(EXACT_HOLD.some(p=>m===p.toLowerCase())) return {stage:'Hold',type:'warm',layer:1};
+  if(LOST_KEYWORDS.some(p=>m.includes(p))) return {stage:'Lost',type:'cold',layer:2};
+  if(MEETING_KEYWORDS.some(p=>m.includes(p))) return {stage:'Meeting Booked',type:'hot',layer:2};
+  if(HOLD_KEYWORDS.some(p=>m.includes(p))) return {stage:'Hold',type:'warm',layer:2};
+  if(WARM_KEYWORDS.some(p=>m.includes(p))) return {stage:'Replied',type:'warm',layer:2};
+  if(HOT_KEYWORDS.some(p=>m.includes(p))) return {stage:'Replied',type:'hot',layer:2};
+  return {stage:'Replied',type:'hot',layer:3};
+}
+
+function reconcileStage(stage, lastMessage, numTouches, spend) {
+  const msg = String(lastMessage||'').trim().replace(/^['"]+|['"]+$/g,'');
+  const touches = parseInt(numTouches)||0;
+  const spendVal = parseFloat(String(spend||0).replace(/[£,]/g,''))||0;
+  const cleanMsg = msg.replace(/^['"`]+|['"`]+$/g,'').trim();
+  const hasMsg = cleanMsg && cleanMsg.length > 1 && cleanMsg.toLowerCase() !== 'nan' && cleanMsg.toLowerCase() !== 'none';
+  const msgLower = hasMsg ? cleanMsg.toLowerCase() : '';
+
+  // THE GOLDEN RULE: Last message always wins over stage label.
+
+  if(hasMsg) {
+    const classified = classifyMessage(cleanMsg);
+    if(classified.stage) {
+      if(stage === 'Won' && classified.stage === 'Won') return 'Won';
+      return classified.stage;
+    }
+  }
+
+  // No message — use stage and other signals
+  if(stage === 'Won') return 'Won';
+
+  // No message at all — stage label cannot be trusted
+  // Use num_touches to determine true stage
+  // num_touches = 0 → New (genuinely never contacted)
+  // num_touches > 0 → Contacted (we reached out, no reply received)
+  // Catches: Replied/Warm/Negotiating with no message (BDR was wrong)
+  //          New with touches > 0 (BDR marked New but already contacted)
+  if(!hasMsg) {
+    if(['Replied','Warm','Negotiating'].includes(stage)) {
+      return touches === 0 ? 'New' : 'Contacted';
+    }
+    if(stage === 'New' && touches > 0) return 'Contacted';
+  }
+
+  if(stage === 'Lost') {
+    if(touches <= 1 && spendVal >= 3000) return 'Hold';
+    if(touches >= 5) return 'Lost';
+    if(spendVal >= 5000 && touches <= 4) return 'Hold';
+    return 'Lost';
+  }
+  if(stage === 'Contacted') return 'Contacted';
+
+  return stage;
+}
+function cleanSpend(v){if(!v)return 0;return parseFloat(String(v).replace(/[£,\s]/g,''))||0;}
+function cleanEmail(e){if(!e)return '';e=String(e).trim().toLowerCase();while(e.includes('@@'))e=e.replace('@@','@');return e;}
+function cleanPhone(p){if(!p)return '';let d=String(p).replace(/\D/g,'');if(d.startsWith('44')&&d.length>10)d='0'+d.slice(2);if(d.startsWith('0044'))d='0'+d.slice(4);return d;}
+
+function classifyLead(row){
+  const hasF=row.followers&&parseFloat(row.followers)>0;
+  const hasV=row.sales_velocity_30d&&parseFloat(row.sales_velocity_30d)>0;
+  const hasE=row.email&&String(row.email).trim()!=='';
+  if(hasF||hasV)return hasE?'reseller_with_email':'reseller';
+  return 'physical_shop';
+}
+
+function getReplyType(msg, notes){
+  const m = String(msg||'').trim().replace(/^['"]+|['"]+$/g,'');
+  if(!m || m.toLowerCase() === 'nan' || m.toLowerCase() === 'none' || m.length < 2) {
+    return 'amber';
+  }
+  const classified = classifyMessage(m);
+  if(classified.stage === 'Meeting Booked') return 'hot';
+  return classified.type || 'none';
+}
+
+function getObjType(msg){
+  const m = String(msg||'').trim().replace(/^['"]+|['"]+$/g,'');
+  if(!m || m.toLowerCase() === 'nan' || m.length < 2) return 'none';
+  const classified = classifyMessage(m);
+  if(classified.stage === 'Hold') return 'timing';
+  if(classified.stage === 'Replied' && classified.type === 'warm') return 'objection';
+  return 'none';
+}
+
+function scoreReseller(r){
+  let s=0;
+  if(r.reply_type==='hot')s+=50;
+  else if(r.reply_type==='warm')s+=25;
+  s+=Math.min((r.est_monthly_spend_gbp/9000)*30,30);
+  s+=Math.min((r.sales_velocity_30d/213)*20,20);
+  s+=Math.min((r.followers/65000)*10,10);
+  s+=Math.min((r.active_listings/568)*5,5);
+  const combined=(parseFloat(r.avg_listing_price_gbp)||0)*r.sales_velocity_30d;
+  s+=Math.min((combined/(65*213))*15,15);
+  return Math.round(s);
+}
+
+function draftDM(r){
+  const name='@'+(r.handle||'there');
+  const m=String(r.last_inbound_text||'').toLowerCase().trim();
+  const notes=String(r.notes||'').toLowerCase();
+  const email=String(r.email||'').trim();
+  const phone=String(r.phone||'').trim();
+  const hasContact=email && email!=='nan' && email.length>3;
+  const hasPhone=phone && phone!=='nan' && phone.length>5;
+
+  const migrationLine = hasContact ?
+    `I'll get that sent straight over to ${email} now.` :
+    hasPhone ?
+    `I'll drop that straight into WhatsApp on ${phone} now.` :
+    "What's the best email or WhatsApp to send that straight over to?";
+
+  if(r.reply_type==='cold') return 'SKIP, hard no received. Mark as Lost.';
+
+  // CATEGORY 1, Cold outreach (amber or new)
+  // High value hook. No contact request on first touch.
+  if(r.reply_type==='amber'||r.reply_type==='new'){
+    if(notes.includes('menswear')) return `Hey ${name}, love your menswear curation. We work with resellers like you on exclusive vintage wholesale, graded stock, no market trips. Worth a look?`;
+    if(notes.includes('high engagement')) return `Hey ${name}, love the engagement your drops get. We work with resellers at your level on exclusive wholesale stock, graded, digital, delivered. Worth a look?`;
+    if(notes.includes('big consignment')) return `Hey ${name}, love the volume you're moving. We work with high-volume resellers on exclusive wholesale bundles. Worth a look?`;
+    return `Hey ${name}, love what you're doing. We work with resellers like you on exclusive vintage wholesale, graded stock you can browse and order without the market trips. Worth a look?`;
+  }
+
+  // CATEGORY 2, Active conversation (hot or warm)
+  // Answer question directly, then migrate to unlimited channel
+  if(m.includes('payout')||m.includes('commission')||m.includes('fee structure'))
+    return `Hey ${name}, everything included in the listing price, no hidden fees, BNPL up to 45 days no interest. ${migrationLine}`;
+  if(m.includes('ship')||m.includes('eu'))
+    return `Hey ${name}, yes we ship to EU, duties and taxes all included in the listing price, no surprises on delivery. Would love to walk you through more on a quick call, would you have 10 minutes this week?`;
+  if(m.includes('bundle')||m.includes('send me')||m.includes('catalogue'))
+    return `Hey ${name}, on it! ${migrationLine} I'll get the bundle list across now.`;
+  if(m.includes('menswear')||m.includes('brands')||m.includes('what brands'))
+    return `Hey ${name}, we carry Ralph Lauren, Carhartt, Levi's, Nike, Adidas and more. FleekSort grades everything. ${migrationLine}`;
+  if(m.includes('yeah keen')||m.includes('sounds good')||m.includes('when can we'))
+    return `Hey ${name}, great to hear it! ${migrationLine} Once you've had a look I can walk you through the rest on a call.`;
+  if(m.includes('vinted')||m.includes('sell on'))
+    return `Hey ${name}, Fleek is the other side of Vinted, it's where you source the stock you sell there. Most of our sellers use both. ${migrationLine}`;
+  if(m.includes('another platform')||m.includes('already on'))
+    return `Hey ${name}, totally get that. Where Fleek stands apart is the stock itself, graded vintage wholesale you simply can't source anywhere else, with FleekSort categorising every item before it arrives. Would love to show you what's coming through. Would you have a quick 10 minutes for a call this week?`;
+  if(m.includes('busy')||m.includes('next month')||m.includes('try later'))
+    return `Hey ${name}, completely understand, no pressure. I'll send over some info so you have it when the time is right. I'll check back in a few weeks.`;
+  if(m.includes('not interested')||m.includes('not taking'))
+    return `Hey ${name}, no problem at all. I'll send over some info in case it's useful. I'll check back in a few weeks.`;
+  // Check if this is an overdue follow up
+  // Hot or warm lead not contacted in 7+ days = rep dropped the ball
+  const lastTouch=String(r.last_touch_date||'').trim();
+  let isOverdue=false;
+  if(lastTouch && lastTouch.toLowerCase()!=='nan'){
+    const touchDate=new Date(lastTouch);
+    if(!isNaN(touchDate)){
+      const daysSince=Math.floor((new Date()-touchDate)/(1000*60*60*24));
+      if(daysSince>7) isOverdue=true;
+    }
+  }
+
+  // Overdue lead, acknowledge the gap, re-engage warmly
+  if(isOverdue && (r.reply_type==='hot'||r.reply_type==='warm')){
+    const topic=m.includes('ship')||m.includes('eu')?'EU shipping':
+                m.includes('payout')||m.includes('commission')||m.includes('fee')?'pricing':
+                m.includes('brand')||m.includes('menswear')?'our stock range':
+                m.includes('bundle')?'the bundle list':'Fleek';
+    return `Hey ${name}, really sorry for the delay getting back to you on ${topic}. Still very keen to connect. ${migrationLine}`;
+  }
+  if(r.reply_type==='hot') return `Hey ${name}, thanks for getting back to me! ${migrationLine}`;
+  return `Hey ${name}, following up. ${migrationLine}`;
+}
+
+function draftEmail(s){
+  const name=s.contact_name||s.store_name||'there';
+  const store=s.store_name||'your store';
+  const city=s.city||'your city';
+  const m=String(s.last_inbound_text||'').toLowerCase();
+  const notes=String(s.notes||'').toLowerCase();
+  if(m.includes('vinted')||m.includes('sell on'))return `Subject: Fleek is for sourcing, not selling\n\nHi ${name},\n\nGreat to hear you're on Vinted, Fleek is actually the other side of that. It's where you source the stock you sell on Vinted. Most of our stores use both.\n\nI'd love to show you how it works. I have time Thursday at 2pm or Friday morning, does either work?\n\nAaron`;
+  if(m.includes('not taking')||m.includes('not interested'))return `Subject: No rush, here's the Fleek overview\n\nHi ${name},\n\nNo problem at all. I'll send over some info about Fleek so you have it when the time is right. I'll check back in with you in a few weeks.\n\nAaron`;
+  if(m.includes('pricing')||m.includes('interested')||m.includes('send'))return `Subject: Fleek pricing for ${store}\n\nHi ${name},\n\nReally glad to hear it. I'd love to walk you through Fleek's pricing and show you the kind of stock we have coming through. I have time Thursday at 2pm or Friday morning, does either work?\n\nAaron`;
+  if(notes.includes('menswear'))return `Subject: Fleek menswear wholesale for ${store}\n\nHi ${name},\n\nI came across ${store} in ${city} and noticed your focus on menswear. We have a strong menswear range coming through regularly, Ralph Lauren, Carhartt, Levi's. I'd love to show you what's available. I have time Thursday at 2pm or Friday morning, does either work?\n\nAaron`;
+  return `Subject: Wholesale sourcing for ${store}\n\nHi ${name},\n\nI came across ${store} in ${city} and wanted to reach out. We work with independent vintage stores to replace manual sourcing with a digital wholesale marketplace, graded stock you can browse and order without the market trips.\n\nI'd love to show you how it works. I have time Thursday at 2pm or Friday morning, does either work?\n\nAaron`;
+}
+
+function getAction(s){
+  const isUK=String(s.country||'').trim().toUpperCase()==='UK';
+  const stage=s.stage||'New';
+  const spend=parseFloat(String(s.est_monthly_spend_gbp||0).replace(/[£,]/g,''))||0;
+  const rt=s.reply_type||'';
+  const ot=s.obj_type||'';
+  const msg=String(s.last_inbound_text||'').toLowerCase().trim();
+
+  // LOST AND HOLD — no visit ever
+  if(stage==='Lost') return 'No contact — hard no received. Do not visit.';
+  if(stage==='Hold') return 'Hold — send content, set reminder. Do not visit yet.';
+
+  // WON — relationship visit UK, email check in international
+  if(stage==='Won'){
+    return isUK ?
+      'Relationship visit — already a customer. Visit to strengthen account and discuss next order.' :
+      'Account management — email check in on next order.';
+  }
+
+  // MEETING BOOKED — confirmed, just show up
+  if(stage==='Meeting Booked'){
+    return isUK ?
+      'Confirmed visit — time agreed, add to city route.' :
+      'Video call confirmed — join at agreed time.';
+  }
+
+  // NEGOTIATING — book visit to close
+  if(stage==='Negotiating'){
+    return isUK ?
+      'Book visit — email to say you will be in the area, then visit in person. Face to face closes deals email cannot.' :
+      'Call — push to close. Video meeting if possible.';
+  }
+
+  // REPLIED — visit depends on reply type and objection
+  if(stage==='Replied'){
+    if(isUK){
+      if(rt==='hot') return 'Book visit — hot reply, high intent. Email to arrange a time before showing up.';
+      if(msg.includes('vinted')||ot==='misunderstanding') return 'Book visit — Vinted misunderstanding easier to clear face to face in 2 minutes than over email.';
+      if(msg.includes('another platform')||ot==='platform') return 'Book visit — platform objection easier to handle in person. Fleek differentiation lands better face to face.';
+      return 'Book visit — warm reply received. Email to arrange before visiting.';
+    }
+    return 'Call — warm reply received. Book a video meeting.';
+  }
+
+  // CONTACTED — call first, high spend justifies cold visit
+  if(stage==='Contacted'){
+    if(isUK){
+      if(spend>=5000) return `Book visit — high value account (£${Math.round(spend).toLocaleString()}/mo). Cold visit justified. Email first to say you will be in the area.`;
+      return 'Call — follow up on email before visiting.';
+    }
+    return 'Call — follow up on email sent.';
+  }
+
+  // NEW — email first, never visit a cold new lead
+  if(stage==='New'){
+    if(isUK&&spend>=5000) return 'Email — high value new account. Visit only after they reply.';
+    return 'Email — first contact. Do not visit until they respond.';
+  }
+
+  return 'Email — first contact.';
+}
+
+function handleFile(input){
+  const file=input.files[0];
+  if(!file)return;
+  document.getElementById('upload-progress').style.display='block';
+  document.getElementById('upload-zone').style.display='none';
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const wb=XLSX.read(e.target.result,{type:'binary',cellDates:true});
+      const sheetNames=wb.SheetNames;
+      const pipelineName=sheetNames.find(n=>n.toLowerCase().includes('pipeline')&&!n.toLowerCase().includes('new')&&!n.toLowerCase().includes('drop'))||sheetNames[0];
+      const day2Name=sheetNames.find(n=>n.toLowerCase().includes('day')||n.toLowerCase().includes('drop')||n.toLowerCase().includes('new_drop'));
+      const rawLeads=XLSX.utils.sheet_to_json(wb.Sheets[pipelineName],{defval:''});
+      const rawDay2=day2Name?XLSX.utils.sheet_to_json(wb.Sheets[day2Name],{defval:''}):[];
+      processData(rawLeads,rawDay2);
+    }catch(err){
+      document.getElementById('upload-progress').textContent='Error reading file: '+err.message;
+    }
+  };
+  reader.readAsBinaryString(file);
+}
+
+function processData(rawLeads,rawDay2){
+  const leads=rawLeads.map(row=>{
+    const handle=cleanHandle(row.handle||'');
+    const rawStage=cleanStage(row.stage||'');
+    const stage=reconcileStage(rawStage, row.last_inbound_text, row.num_touches, row.est_monthly_spend_gbp);
+    const spend=cleanSpend(row.est_monthly_spend_gbp||0);
+    const email=cleanEmail(row.email||'');
+    const lt=classifyLead({followers:row.followers,sales_velocity_30d:row.sales_velocity_30d,email});
+    // Every lead gets a reply type — no gaps, no exceptions
+    // hot:   buying signal, act today
+    // warm:  objection or timing, needs handling
+    // amber: contacted before, no reply received
+    // new:   never contacted, first touch needed
+    // cold:  hard no
+    const rawMsg=String(row.last_inbound_text||'').trim().replace(/^['"`]+|['"`]+$/g,'');
+    const touches=parseInt(row.num_touches)||0;
+    let rt='new';
+    const effectiveMsg = (rawMsg && rawMsg.toLowerCase()!=='nan' && rawMsg.toLowerCase()!=='none' && rawMsg.length>1) ? rawMsg : '';
+    if(effectiveMsg){
+      const classified=classifyMessage(effectiveMsg);
+      rt=classified.type||'amber';
+
+      // DATE-BASED URGENCY ADJUSTMENT
+      // Hot and warm leads should never go more than 7 days without contact.
+      // If they do the rep dropped the ball — surface as urgent immediately.
+      // Uses last_touch_date — real data not a proxy.
+      //
+      // Hot + within 7 days → Hot, actively worked
+      // Hot + over 7 days → Hot OVERDUE, chase today
+      // Warm + within 7 days → Warm, actively worked
+      // Warm + over 7 days → Upgrade to Hot OVERDUE
+      //   A warm lead ignored for 7+ days is now urgent
+      // Date urgency — only for non-Hold stages
+      // Hold leads stay warm regardless of last_touch_date
+      // "not interested right now" never becomes hot just because it is overdue
+      const reconciledStage=reconcileStage(rawStage, row.last_inbound_text, row.num_touches, row.est_monthly_spend_gbp);
+      if((rt==='hot'||rt==='warm') && reconciledStage!=='Hold'){
+        const lastTouch=String(row.last_touch_date||'').trim();
+        if(lastTouch && lastTouch.toLowerCase()!=='nan'){
+          const touchDate=new Date(lastTouch);
+          if(!isNaN(touchDate)){
+            const daysSince=Math.floor((new Date()-touchDate)/(1000*60*60*24));
+            if(daysSince>7){
+              rt='hot'; // overdue — surface as urgent
+            }
+          }
+        }
+      }
+    } else {
+      // No message — three factors determine the category:
+      // num_touches > 0 = we reached out, heard nothing back = amber
+      // has notes = BDR left intel about them = amber, we know something
+      // num_touches is 0 AND no notes = genuinely never touched = new (blue)
+      const notes=String(row.notes||'').trim();
+      const hasNotes=notes && notes.toLowerCase()!=='nan' && notes.length>1;
+      rt = (touches > 0 || hasNotes) ? 'amber' : 'new';
+    }
+    const ot=getObjType(row.last_inbound_text);
+    return{lead_id:String(row.lead_id||''),source:row.source||'',handle,store_name:row.store_name||'',contact_name:row.contact_name||'',email,phone:row.phone||'',city:row.city||'',country:row.country||'',followers:parseFloat(row.followers)||0,active_listings:parseFloat(row.active_listings)||0,avg_listing_price_gbp:parseFloat(row.avg_listing_price_gbp)||0,sales_velocity_30d:parseFloat(row.sales_velocity_30d)||0,est_monthly_spend_gbp:spend,stage,first_seen_date:row.first_seen_date||'',last_touch_date:row.last_touch_date||'',num_touches:parseInt(row.num_touches)||0,last_inbound_text:row.last_inbound_text||'',assigned_bdr:row.assigned_bdr||'',notes:row.notes||'',lead_type:lt,reply_type:rt,obj_type:ot};
+  });
+
+  const seen_ids=new Set(),seen_handles=new Set(),seen_emails=new Set(),seen_phones=new Set(),seen_store_city=new Set();
+  const deduped=[];let dupeCount=0;
+  leads.forEach(l=>{
+    const ph=cleanPhone(l.phone);
+    const sc=l.store_name&&l.city?l.store_name.toLowerCase()+'|'+l.city.toLowerCase():'';
+    const isDupe=seen_ids.has(l.lead_id)||(l.handle&&seen_handles.has(l.handle))||(l.email&&seen_emails.has(l.email))||(ph&&seen_phones.has(ph))||(sc&&seen_store_city.has(sc));
+    if(!isDupe){deduped.push(l);seen_ids.add(l.lead_id);if(l.handle)seen_handles.add(l.handle);if(l.email)seen_emails.add(l.email);if(ph)seen_phones.add(ph);if(sc)seen_store_city.add(sc);}
+    else dupeCount++;
+  });
+
+  const resellers=deduped.filter(l=>l.lead_type!=='physical_shop'&&!['Won','Lost'].includes(l.stage));
+  const shops=deduped.filter(l=>l.lead_type==='physical_shop');
+  // INTENT-FIRST WHALE-SECOND DAILY PRIORITISATION
+  // Step A: Hot and Warm replies fill top slots first (sorted by spend)
+  // Step B: Fill remaining slots with Amber and New leads (by spend)
+  const DAILY_LIMIT = 40;
+
+  const hotReplies = resellers
+    .filter(r=>r.reply_type==='hot' && !['Won','Lost'].includes(r.stage))
+    .sort((a,b)=>b.est_monthly_spend_gbp-a.est_monthly_spend_gbp);
+
+  const warmReplies = resellers
+    .filter(r=>r.reply_type==='warm' && !['Won','Lost'].includes(r.stage))
+    .sort((a,b)=>b.est_monthly_spend_gbp-a.est_monthly_spend_gbp);
+
+  const stepA = [...hotReplies, ...warmReplies];
+  const slotsRemaining = Math.max(0, DAILY_LIMIT - stepA.length);
+
+  // STEP B: Commercial scoring for new and amber leads
+  // No reply history so score on scraped commercial signals only
+  const maxVelocity = Math.max(...resellers.map(r=>r.sales_velocity_30d||0)) || 1;
+  const maxCombined = Math.max(...resellers.map(r=>(r.avg_listing_price_gbp||0)*(r.sales_velocity_30d||0))) || 1;
+  const maxSpend = Math.max(...resellers.map(r=>r.est_monthly_spend_gbp||0)) || 1;
+  const maxFollowers = Math.max(...resellers.map(r=>r.followers||0)) || 1;
+
+  const scoreStepB = r => {
+    const velocity = parseFloat(r.sales_velocity_30d)||0;
+    const avgPrice = parseFloat(r.avg_listing_price_gbp)||0;
+    const spend = parseFloat(r.est_monthly_spend_gbp)||0;
+    const followers = parseFloat(r.followers)||0;
+    const listings = Math.max(parseFloat(r.active_listings)||1, 1);
+    const touches = parseInt(r.num_touches)||0;
+    const combined = avgPrice * velocity;
+    const turnover = velocity / listings;
+    const maxTurnover = 10; // cap ratio
+
+    const s1 = (velocity / maxVelocity) * 40;        // velocity 40pts
+    const s2 = (combined / maxCombined) * 30;         // combined revenue 30pts
+    const s3 = (spend / maxSpend) * 20;               // spend 20pts
+    const s4 = (followers / maxFollowers) * 15;       // followers 15pts
+    const s5 = Math.min(turnover / maxTurnover, 1) * 10; // turnover ratio 10pts
+    const penalty = touches >= 5 ? -50 : 0;           // ghost penalty
+
+    return s1 + s2 + s3 + s4 + s5 + penalty;
+  };
+
+  const stepB = resellers
+    .filter(r=>['amber','new'].includes(r.reply_type) && !['Won','Lost'].includes(r.stage))
+    .map(r=>({...r, step_b_score: scoreStepB(r)}))
+    .sort((a,b)=>b.step_b_score-a.step_b_score)
+    .slice(0, slotsRemaining);
+
+  const top40 = [...stepA, ...stepB].slice(0, DAILY_LIMIT);
+
+  // Add priority rank, score and slot type for display
+  top40.forEach((r,i)=>{
+    r.priority_rank = i+1;
+    r.priority_score = Math.round(scoreReseller(r));
+    r.slot_type = r.reply_type==='hot' ? 'Step A - Active (Hot)' :
+                  r.reply_type==='warm' ? 'Step A - Active (Warm)' :
+                  r.reply_type==='amber' ? 'Step B - Whale Filler (Amber)' :
+                  'Step B - Whale Filler (New)';
+    r.drafted_dm = draftDM(r);
+  });
+  shops.forEach(s=>{s.action=getAction(s);s.drafted_email=draftEmail(s);});
+
+  const day2=rawDay2.map(row=>{
+    const handle=cleanHandle(row.handle||'');
+    const email=cleanEmail(row.email||'');
+    const ph=cleanPhone(row.phone||'');
+    const sc=row.store_name&&row.city?String(row.store_name).toLowerCase()+'|'+String(row.city).toLowerCase():'';
+    let isDupe=false,dupeReason='';
+    if(seen_ids.has(String(row.lead_id||''))){isDupe=true;dupeReason=`lead_id ${row.lead_id} already in pipeline`;}
+    else if(handle&&seen_handles.has(handle)){isDupe=true;dupeReason=`handle @${handle} already in pipeline (different lead ID — would have been missed by ID-only check)`;}
+    else if(email&&seen_emails.has(email)){isDupe=true;dupeReason=`email ${email} already in pipeline`;}
+    else if(ph&&seen_phones.has(ph)){isDupe=true;dupeReason=`phone number already in pipeline`;}
+    else if(sc&&seen_store_city.has(sc)){isDupe=true;dupeReason=`store ${row.store_name} in ${row.city} already in pipeline`;}
+    const lt=classifyLead({followers:row.followers,sales_velocity_30d:row.sales_velocity_30d,email});
+    return{lead_id:String(row.lead_id||''),handle,store_name:row.store_name||'',contact_name:row.contact_name||'',email,phone:row.phone||'',city:row.city||'',country:row.country||'',notes:row.notes||'',lead_type:lt,est_monthly_spend_gbp:cleanSpend(row.est_monthly_spend_gbp||0),isDupe,dupeReason};
+  });
+
+  state={leads:deduped,resellers,shops,top40,dupes:day2.filter(l=>l.isDupe),newLeads:day2.filter(l=>!l.isDupe),rFilter:'all',sFilter:'all',expanded:{},dupeCount};
+
+  document.getElementById('upload-progress').style.display='none';
+  renderAll();
+}
+
+function renderAll(){
+  const{leads,top40,shops,dupes,newLeads,dupeCount}=state;
+  document.getElementById('s-total').textContent=leads.length;
+  document.getElementById('s-dms').textContent=top40.length;
+  document.getElementById('s-shops').textContent=shops.length;
+  document.getElementById('s-neg').textContent=leads.filter(l=>l.stage==='Negotiating').length;
+
+  const stageCounts={};leads.forEach(l=>{stageCounts[l.stage]=(stageCounts[l.stage]||0)+1;});
+  const total=leads.length;
+  document.getElementById('stage-bar').innerHTML=Object.entries(stageCounts).map(([s,c])=>`<div style="width:${Math.round(c/total*100)}%;background:${STAGE_COLORS[s]||'#888'};height:100%;"></div>`).join('');
+  document.getElementById('stage-legend').innerHTML=Object.entries(stageCounts).map(([s,c])=>`<div class="stage-item"><div class="stage-dot" style="background:${STAGE_COLORS[s]||'#888'};"></div>${s} ${c}</div>`).join('');
+
+  const res=leads.filter(l=>l.lead_type!=='physical_shop');
+  const phyShops=leads.filter(l=>l.lead_type==='physical_shop');
+  const withEmail=res.filter(l=>l.lead_type==='reseller_with_email');
+  document.getElementById('overview-metrics').innerHTML=`
+    <div class="metric"><div class="metric-num">${leads.length}</div><div class="metric-label">Clean leads</div></div>
+    <div class="metric"><div class="metric-num red">${res.length}</div><div class="metric-label">Resellers</div></div>
+    <div class="metric"><div class="metric-num amber">${phyShops.length}</div><div class="metric-label">Physical shops</div></div>
+    <div class="metric"><div class="metric-num green">${withEmail.length}</div><div class="metric-label">Resellers with email</div></div>
+    <div class="metric"><div class="metric-num blue">${dupeCount}</div><div class="metric-label">Duplicates removed</div></div>
+    <div class="metric"><div class="metric-num">${leads.filter(l=>l.stage==='Replied').length}</div><div class="metric-label">Replied leads</div></div>
+    <div class="metric"><div class="metric-num red">${leads.filter(l=>l.reply_type==='hot').length}</div><div class="metric-label">Hot replies</div></div>
+    <div class="metric"><div class="metric-num">${leads.filter(l=>l.stage==='Won').length}</div><div class="metric-label">Won deals</div></div>
+  `;
+  document.getElementById('f1-desc').textContent=`${leads.length+dupeCount} raw leads → ${leads.length} clean. ${dupeCount} duplicates removed. Handles normalised, stages standardised, dates fixed, spend figures cleaned.`;
+  document.getElementById('f2-desc').textContent=`${res.length} resellers classified by metrics data (not label). ${phyShops.length} physical shops. ${withEmail.length} resellers also have an email address — can be contacted two ways.`;
+  document.getElementById('f3-desc').textContent=`${top40.length} resellers selected for today's DMs from ${res.length} active resellers. Scored on 7 signals: reply type, spend, velocity, followers, listings, combined revenue.`;
+  const ukShops=phyShops.filter(s=>String(s.country).toUpperCase()==='UK');
+  const amberCount=leads.filter(l=>l.reply_type==='amber').length;
+  document.getElementById('reseller-summary').innerHTML=`${res.length} leads across Instagram, Depop, Vinted, TikTok. DM only — rate limited to 40/day.<br><br><strong>${leads.filter(l=>l.reply_type==='hot').length} hot replies</strong> need a response today. <strong>${leads.filter(l=>l.reply_type==='warm').length} warm replies</strong> have objections to handle. <strong style='color:#c2410c;'>${amberCount} amber leads</strong> have no reply yet — we do not know where they stand. Nothing is dead unless they say a hard no.`;
+  document.getElementById('shop-summary').innerHTML=`${phyShops.length} shops with email, phone and city.<br><br><strong>${ukShops.length} UK shops</strong> — email first, call, then visit in person grouped by city.<br><strong>${phyShops.length-ukShops.length} international</strong> — email and call only.`;
+  document.getElementById('overview-content').style.display='block';
+
+  const hot=top40.filter(r=>r.reply_type==='hot').length;
+  const warm=top40.filter(r=>r.reply_type==='warm').length;
+  document.getElementById('reseller-metrics').innerHTML=`
+    <div class="metric"><div class="metric-num">${top40.length}</div><div class="metric-label">DMs today</div></div>
+    <div class="metric"><div class="metric-num red">${hot+warm}</div><div class="metric-label">Step A — Active convos</div></div>
+    <div class="metric"><div class="metric-num red">${hot}</div><div class="metric-label">🔥 Hot replies</div></div>
+    <div class="metric"><div class="metric-num amber">${warm}</div><div class="metric-label">Warm replies</div></div>
+    <div class="metric"><div class="metric-num blue">${top40.filter(r=>['amber','new'].includes(r.reply_type)).length}</div><div class="metric-label">Step B — Whale filler</div></div>
+  `;
+  document.getElementById('resellers-empty').style.display='none';
+  document.getElementById('resellers-content').style.display='block';
+
+  const ukS=phyShops.filter(s=>String(s.country).toUpperCase()==='UK');
+  const neg=phyShops.filter(s=>s.stage==='Negotiating');
+  document.getElementById('shop-metrics').innerHTML=`
+    <div class="metric"><div class="metric-num">${phyShops.length}</div><div class="metric-label">Total shops</div></div>
+    <div class="metric"><div class="metric-num red">${ukS.length}</div><div class="metric-label">UK shops</div></div>
+    <div class="metric"><div class="metric-num blue">${phyShops.length-ukS.length}</div><div class="metric-label">International</div></div>
+    <div class="metric"><div class="metric-num amber">${neg.length}</div><div class="metric-label">Negotiating</div></div>
+    <div class="metric"><div class="metric-num">${phyShops.filter(s=>s.stage==='Meeting Booked').length}</div><div class="metric-label">Meetings booked</div></div>
+  `;
+  document.getElementById('shops-empty').style.display='none';
+  document.getElementById('shops-content').style.display='block';
+
+  document.getElementById('batch-metrics').innerHTML=`
+    <div class="metric"><div class="metric-num">${dupes.length+newLeads.length}</div><div class="metric-label">Day 2 leads checked</div></div>
+    <div class="metric"><div class="metric-num green">${newLeads.length}</div><div class="metric-label">Genuinely new</div></div>
+    <div class="metric"><div class="metric-num red">${dupes.length}</div><div class="metric-label">Flagged duplicates</div></div>
+  `;
+  document.getElementById('batch-empty').style.display='none';
+  document.getElementById('batch-content').style.display='block';
+  kanbanStages={};
+
+  renderResellers();
+  renderShops();
+  renderBatch();
+}
+
+function setFilter(type,val,btn){
+  if(type==='r'){state.rFilter=val;document.querySelectorAll('#r-filters .fbtn').forEach(b=>b.classList.remove('active'));}
+  else{state.sFilter=val;document.querySelectorAll('#s-filters .fbtn').forEach(b=>b.classList.remove('active'));}
+  btn.classList.add('active');
+  if(type==='r')renderResellers();else renderShops();
+}
+
+function toggle(id){state.expanded[id]=!state.expanded[id];renderResellers();renderShops();renderBatch();}
+
+function copyText(text,btn){
+  navigator.clipboard.writeText(text).then(()=>{btn.textContent='Copied!';setTimeout(()=>{btn.textContent='Copy';},2000);});
+}
+
+function renderResellers(){
+  if(!state.top40.length)return;
+  const search=(document.getElementById('r-search')||{}).value||'';
+  let list=state.top40.filter(r=>{
+    const mf=state.rFilter==='all'||(state.rFilter==='email'&&r.lead_type==='reseller_with_email')||r.reply_type===state.rFilter;
+    const ms=!search||r.handle.toLowerCase().includes(search.toLowerCase())||String(r.last_inbound_text||'').toLowerCase().includes(search.toLowerCase());
+    return mf&&ms;
+  });
+  const sc=r=>r.reply_type==='hot'?'s-hot':r.reply_type==='warm'?'s-warm':'s-qual';
+  const bc=r=>r.reply_type==='hot'?'b-hot':r.reply_type==='warm'?'b-warm':r.reply_type==='amber'?'b-amber':r.reply_type==='new'?'b-new-lead':'b-new';
+  const bl=r=>r.reply_type==='hot'?'🔥 Hot reply':r.reply_type==='warm'?'Warm reply':r.reply_type==='amber'?'🟠 Not replied yet':r.reply_type==='new'?'🔵 Not contacted yet':'—';
+  document.getElementById('reseller-list').innerHTML=!list.length?'<div class="empty">No leads match this filter.</div>':list.map((r,i)=>{
+    const id='r'+i;
+    const exp=state.expanded[id];
+    return `<div class="card">
+      <div class="card-top">
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <div class="lead-name">@${r.handle}</div>
+            <span class="badge ${bc(r)}">${bl(r)}</span>
+            ${r.lead_type==='reseller_with_email'?'<span class="badge b-new">Has email</span>':''}
+            ${r.slot_type?`<span style="font-size:9px;color:#999;padding:2px 6px;background:#f5f5f5;border-radius:8px;">#${r.priority_rank} ${r.slot_type}</span>`:''}
+          </div>
+          <div class="lead-sub">${r.followers?r.followers.toLocaleString()+' followers':''} ${r.sales_velocity_30d?'· '+r.sales_velocity_30d+' sales/30d':''} ${r.est_monthly_spend_gbp?'· £'+r.est_monthly_spend_gbp.toLocaleString()+'/mo':''}</div>
+          ${r.last_inbound_text?`<div class="signal-tag">"${String(r.last_inbound_text).substring(0,90)}"</div>`:''}
+          ${r.notes?`<div class="signal-tag">📝 ${r.notes}</div>`:''}
+          ${r.assigned_bdr?`<div class="signal-tag">BDR: ${r.assigned_bdr}</div>`:''}
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-left:10px;max-width:160px;text-align:right;">
+          <div style="font-size:10px;font-weight:600;color:${r.reply_type==='hot'?'#dc2626':r.reply_type==='warm'?'#d97706':r.reply_type==='amber'?'#c2410c':'#1d4ed8'};">${(()=>{
+            const rt=r.reply_type;
+            const spend=r.est_monthly_spend_gbp;
+            const spendStr=spend?'£'+Math.round(spend).toLocaleString()+'/mo':'';
+            const lastTouch=String(r.last_touch_date||'').trim();
+            let daysStr='';
+            if(lastTouch&&lastTouch.toLowerCase()!=='nan'){
+              const d=Math.floor((new Date()-new Date(lastTouch))/(1000*60*60*24));
+              if(d>0) daysStr=d+' days ago';
+            }
+            const vel=r.sales_velocity_30d?Math.round(r.sales_velocity_30d)+' sales/mo':'';
+            const touches=r.num_touches?r.num_touches+' touches':'';
+            if(rt==='hot') return [spendStr,daysStr?'⚠ '+daysStr:'unanswered signal'].filter(Boolean).join(' · ');
+            if(rt==='warm') return [r.obj_type&&r.obj_type!=='none'?r.obj_type.replace('_',' '):'objection',spendStr,daysStr?daysStr:''].filter(Boolean).join(' · ');
+            if(rt==='amber') return [touches+' no reply',vel,spendStr].filter(Boolean).join(' · ');
+            return ['never contacted',vel,spendStr].filter(Boolean).join(' · ');
+          })()}</div>
+          <button class="expand-btn" onclick="toggle('${id}')">${exp?'Hide':'View DM'}</button>
+        </div>
+      </div>
+      ${exp?`<div class="msgbox">${r.drafted_dm}<br><br><button class="copy-btn" onclick="copyText(\`${r.drafted_dm.replace(/`/g,"'")}\`,this)">Copy</button></div>`:''}
+    </div>`;
+  }).join('');
+}
+
+function renderShops(){
+  if(!state.shops.length)return;
+  let list=state.shops.filter(s=>{
+    const c=String(s.country||'').toUpperCase();
+    if(state.sFilter==='uk')return c==='UK';
+    if(state.sFilter==='intl')return c!=='UK';
+    if(state.sFilter==='negotiating')return s.stage==='Negotiating';
+    if(state.sFilter==='visit')return c==='UK'&&['Negotiating','Meeting Booked','Replied'].includes(s.stage);
+    return true;
+  });
+  list.sort((a,b)=>{
+    if(a.city!==b.city)return a.city.localeCompare(b.city);
+    const pa=STAGE_PRIORITY[a.stage]||5,pb=STAGE_PRIORITY[b.stage]||5;
+    if(pa!==pb)return pa-pb;
+    return b.est_monthly_spend_gbp-a.est_monthly_spend_gbp;
+  });
+  const cities=[...new Set(list.map(s=>s.city))];
+  const sc=s=>{if(s.stage==='Negotiating')return 'b-hot';if(s.stage==='Meeting Booked')return 'b-new';if(s.stage==='Replied')return 'b-warm';return '';};
+  document.getElementById('shop-list').innerHTML=!cities.length?'<div class="empty">No shops match this filter.</div>':cities.map(city=>{
+    const cityShops=list.filter(s=>s.city===city);
+    const isUK=String(cityShops[0].country||'').toUpperCase()==='UK';
+    const neg=cityShops.filter(s=>s.stage==='Negotiating').length;
+    const warm=cityShops.filter(s=>s.stage==='Replied').length;
+    return `<div class="city-hdr"><span>${isUK?'📍':'🌍'} ${city} ${!isUK?'('+cityShops[0].country+')':''}</span><span class="city-count">${cityShops.length} shops · ${isUK?'In-person visits':'Email/call only'} ${neg?' · '+neg+' negotiating':''} ${warm?' · '+warm+' warm':''}</span></div>
+    ${cityShops.map((s,i)=>{
+      const id='s'+city+i;const exp=state.expanded[id];
+      return `<div class="card">
+        <div class="card-top">
+          <div style="flex:1;">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <div class="lead-name">${s.store_name||'Unknown store'}</div>
+              ${s.stage?`<span class="badge ${sc(s)}">${s.stage}</span>`:''}
+            </div>
+            <div class="lead-sub">${s.contact_name||'—'} ${s.email?'· '+s.email:''} ${s.phone?'· '+s.phone:''}</div>
+            ${s.last_inbound_text?`<div class="signal-tag">"${String(s.last_inbound_text).substring(0,80)}"</div>`:''}
+            ${s.notes?`<div class="signal-tag">📝 ${s.notes}</div>`:''}
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-left:10px;">
+            <div style="font-size:13px;font-weight:600;">£${s.est_monthly_spend_gbp.toLocaleString()}/mo</div>
+            <button class="expand-btn" onclick="toggle('${id}')">${exp?'Hide':'Action + Email'}</button>
+          </div>
+        </div>
+        ${exp?`<div class="msgbox"><strong>Next action: ${s.action}</strong>\n\n${s.drafted_email}<br><br><button class="copy-btn" onclick="copyText(\`${s.drafted_email.replace(/`/g,"'")}\`,this)">Copy email</button></div>`:''}
+      </div>`;
+    }).join('')}`;
+  }).join('');
+}
+
+function renderBatch(){
+  document.getElementById('dup-list').innerHTML=!state.dupes.length?'<div class="empty">No duplicates found in day 2 batch.</div>':state.dupes.map(d=>`
+    <div class="card dup-card">
+      <div class="card-top">
+        <div><div class="lead-name">${d.handle?'@'+d.handle:d.store_name||d.lead_id}</div><div class="lead-sub">${d.lead_id}</div></div>
+        <span class="badge b-flag">⚠ Duplicate flagged</span>
+      </div>
+      <div class="msgbox">${d.dupeReason}\n\nNot added to pipeline. No outreach will be sent.</div>
+    </div>`).join('');
+  document.getElementById('new-list').innerHTML=!state.newLeads.length?'<div class="empty">No new leads in day 2 batch.</div>':state.newLeads.map((l,i)=>{
+    const id='b'+i;const exp=state.expanded[id];
+    return `<div class="card new-card">
+      <div class="card-top">
+        <div style="flex:1;">
+          <div class="lead-name">${l.handle?'@'+l.handle:l.store_name||l.lead_id}</div>
+          <div class="lead-sub">${l.lead_type==='physical_shop'?(l.city||'')+(l.country?' · '+l.country:'')+' · Shop':'Online reseller'} ${l.est_monthly_spend_gbp?'· £'+l.est_monthly_spend_gbp.toLocaleString()+'/mo':''}</div>
+          ${l.notes?`<div class="signal-tag">📝 Signal: ${l.notes}</div>`:''}
+        </div>
+        <span class="badge b-ok">✓ Added to pipeline</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function showTab(tab){
+  document.querySelectorAll('.tab-content').forEach(el=>el.classList.remove('active'));
+  document.getElementById('tab-'+tab).classList.add('active');
+  document.querySelectorAll('.tab').forEach((b,i)=>{b.classList.toggle('active',['overview','resellers','shops','batch','kanban'][i]===tab);});
+  if(tab==='kanban') renderKanban();
+}
+
+const KANBAN_STAGES=[
+  {id:'New',label:'NEW',sub:'Never contacted',cls:'col-new',color:'#7c3aed'},
+  {id:'Contacted',label:'CONTACTED',sub:'Reached out — zero reply received',cls:'col-contacted',color:'#d97706'},
+  {id:'Replied',label:'REPLIED',sub:'They responded — hot or warm',cls:'col-replied',color:'#ef4444'},
+  {id:'Meeting Booked',label:'MEETING BOOKED',sub:'Time or visit agreed — tick to confirm',cls:'col-meeting',color:'#2563eb'},
+  {id:'Won',label:'WON',sub:'Deal genuinely closed',cls:'col-won',color:'#16a34a'},
+  {id:'Hold',label:'ON HOLD',sub:'Soft no or timing — follow up later',cls:'col-hold',color:'#f97316'},
+  {id:'Lost',label:'LOST',sub:'Hard no only — stop messaging',cls:'col-lost',color:'#9ca3af'},
+];
+
+let draggedCard=null;
+let kanbanStages={};
+let confirmedMeetings={};
+
+function renderKanban(){
+  if(!state.leads.length)return;
+  // Build stage map from current state
+  if(!Object.keys(kanbanStages).length){
+    KANBAN_STAGES.forEach(s=>{kanbanStages[s.id]=[];});
+    state.leads.forEach(l=>{
+      const stage=l.stage||'New';
+      if(kanbanStages[stage])kanbanStages[stage].push(l);
+      else kanbanStages['New'].push(l);
+    });
+  }
+  document.getElementById('kanban-empty').style.display='none';
+  document.getElementById('kanban-content').style.display='block';
+  const board=document.getElementById('kanban-board');
+  board.innerHTML=KANBAN_STAGES.map(s=>{
+    const leads=kanbanStages[s.id]||[];
+    const totalSpend=leads.reduce((sum,l)=>sum+(l.est_monthly_spend_gbp||0),0);
+    return `<div class="kanban-col ${s.cls}" id="col-${s.id.replace(' ','-')}"
+      ondragover="event.preventDefault();this.classList.add('drag-over')"
+      ondragleave="this.classList.remove('drag-over')"
+      ondrop="dropCard(event,'${s.id}')">
+      <div class="kanban-col-header" style="color:${s.color}">
+        <span>${s.label}</span>
+        <span class="kanban-count">${leads.length}</span>
+      </div>
+      <div style="font-size:10px;color:#aaa;margin-bottom:8px;">${s.sub}</div>
+      ${totalSpend>0?`<div style="font-size:10px;color:#888;margin-bottom:8px;">£${Math.round(totalSpend).toLocaleString()}/mo total</div>`:''}
+      ${leads.map(l=>{
+        const name=l.handle?'@'+l.handle:l.store_name||l.lead_id;
+        const isShop=l.lead_type==='physical_shop';
+        const type=isShop?'🏪':'📱';
+        const typeLabel=isShop?'Brick & Mortar':'Online Reseller';
+        const typeColor=isShop?'background:#eff6ff;color:#2563eb':'background:#fdf4ff;color:#7c3aed';
+        const rtBadge=l.reply_type==='hot'?'background:#fef2f2;color:#dc2626':l.reply_type==='warm'?'background:#fffbeb;color:#d97706':l.reply_type==='amber'?'background:#fff7ed;color:#c2410c':l.reply_type==='new'?'background:#eff6ff;color:#1d4ed8':'background:#f3f4f6;color:#6b7280';
+        const rtLabel=l.reply_type==='hot'?'🔥 Hot reply':l.reply_type==='warm'?'Warm reply':l.reply_type==='amber'?'🟠 Not replied yet':l.reply_type==='new'?'🔵 Not contacted yet':l.reply_type==='cold'?'Cold':'—';
+        const isMeetingCol = s.id === 'Meeting Booked';
+        const isConfirmed = confirmedMeetings[l.lead_id] || false;
+        return `<div class="kanban-card" draggable="true"
+          ondragstart="dragCard(event,'${l.lead_id}')"
+          ondragend="this.classList.remove('dragging')"
+          style="${isConfirmed?'border-left:3px solid #16a34a;':''} ">
+          <div class="k-name">${type} ${name.substring(0,22)}</div>
+          <span class="k-badge" style="${typeColor}">${typeLabel}</span>
+          <div class="k-sub" style="margin-top:4px;">${l.city||''} ${l.assigned_bdr?'· BDR: '+l.assigned_bdr:''}</div>
+          ${l.est_monthly_spend_gbp?`<div class="k-spend">£${l.est_monthly_spend_gbp.toLocaleString()}/mo est.</div>`:''}
+          ${l.last_inbound_text?`<div class="k-sub" style="font-style:italic;margin-top:3px;">"${String(l.last_inbound_text).substring(0,40)}"</div>`:''}
+          ${l.reply_type&&l.reply_type!=='none'?`<span class="k-badge" style="${rtBadge};margin-top:4px;">${rtLabel}</span>`:''}
+          ${isMeetingCol?`<div style="margin-top:8px;padding-top:8px;border-top:0.5px solid #eee;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:#555;">
+              <input type="checkbox" ${isConfirmed?'checked':''} onchange="toggleConfirmed('${l.lead_id}',this.checked)" onclick="event.stopPropagation()" style="cursor:pointer;">
+              ${isConfirmed?'<span style="color:#16a34a;font-weight:600;">✓ Time confirmed</span>':'Time confirmed?'}
+            </label>
+          </div>`:''}
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+function toggleConfirmed(leadId, checked) {
+  confirmedMeetings[leadId] = checked;
+  renderKanban();
+}
+
+function dragCard(event,leadId){
+  draggedCard=leadId;
+  event.target.classList.add('dragging');
+}
+
+function dropCard(event,newStage){
+  event.preventDefault();
+  event.currentTarget.classList.remove('drag-over');
+  if(!draggedCard)return;
+  // Find the lead and move it
+  let lead=null;
+  let oldStage=null;
+  KANBAN_STAGES.forEach(s=>{
+    const idx=(kanbanStages[s.id]||[]).findIndex(l=>l.lead_id===draggedCard);
+    if(idx>=0){lead=kanbanStages[s.id][idx];oldStage=s.id;kanbanStages[s.id].splice(idx,1);}
+  });
+  if(lead){
+    lead.stage=newStage;
+    if(!kanbanStages[newStage])kanbanStages[newStage]=[];
+    kanbanStages[newStage].push(lead);
+    // Also update in main leads array
+    const mainIdx=state.leads.findIndex(l=>l.lead_id===draggedCard);
+    if(mainIdx>=0)state.leads[mainIdx].stage=newStage;
+  }
+  draggedCard=null;
+  renderKanban();
+}
+</script>
+</body>
+</html>
