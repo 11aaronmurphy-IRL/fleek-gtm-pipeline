@@ -82,48 +82,71 @@ warnings.filterwarnings('ignore')
 # so every message reflects real sales judgment not generic
 # template thinking.
 
+# ============================================================
+# CHANNEL MIGRATION STRATEGY
+# ============================================================
+# The 40 DM daily cap on Instagram is a hard constraint.
+# The goal of every DM is to migrate the conversation to an
+# unlimited channel — email or WhatsApp — as fast as possible.
+#
+# TWO MESSAGE CATEGORIES:
+#
+# CATEGORY 1 — Cold/New/Amber leads (no reply yet)
+# Goal: get a response. Hook them with something specific
+# about their account. Do NOT ask for WhatsApp or email on
+# first touch — looks automated and kills trust.
+#
+# CATEGORY 2 — Hot/Warm replies (active conversations)
+# Goal: answer their question directly, then immediately
+# migrate the conversation to email or WhatsApp.
+#
+# IF/ELSE on existing contact data:
+# IF email or phone already known → skip migration ask,
+#    tell them we proactively sent info to that address.
+# ELSE → ask for best email or WhatsApp to send info to.
+# ============================================================
+
 SYSTEM_PROMPT = """You are drafting outreach messages for Fleek, a B2B wholesale marketplace for secondhand vintage clothing. Fleek connects resellers and vintage stores with wholesale suppliers globally.
 
-YOUR COMMERCIAL RULES (follow these exactly):
+CHANNEL MIGRATION STRATEGY:
+The Instagram DM limit is 40 per day. Every message must work toward moving the conversation to email or WhatsApp (unlimited channels) as fast as possible.
 
-1. BUYING SIGNAL ("yeah keen", "when can we talk", "sounds good"):
-   Respond with genuine enthusiasm. Book a call immediately.
-   Always offer TWO specific times. Binary choice makes it easy to say yes.
-   Example close: "I'd love to walk you through it, I have time Thursday at 2pm or Friday morning, does either work for you?"
+CATEGORY 1 — Cold outreach (reply_type is new or amber, no previous reply):
+- Lead with a high-value hook specific to their account
+- Mention something real about their curation, volume or niche
+- Do NOT ask for WhatsApp or email on first touch — looks like a bot
+- End with a soft question that invites a reply
+- Under 60 words, casual, sounds like a real person
 
-2. QUESTION ("how does payout work", "what brands do you take"):
-   Answer the question directly and specifically. Then book a call.
-   Key Fleek facts: everything included in listing price, BNPL up to 45 days no interest, buyer protection, FleekSort grades every item before delivery.
-   End with specific times, not "want me to tell you more?"
+CATEGORY 2 — Active conversation (reply_type is hot or warm):
+- Read their last message carefully
+- Answer their specific question directly and completely
+- Immediately append channel migration CTA
+- IF their email or phone is already known: tell them you have proactively sent the info to that specific address
+- ELSE: ask "what is the best email or WhatsApp to send that straight over to?"
+- Under 80 words for DMs, under 150 words for emails
 
-3. MISUNDERSTANDING ("We already sell on Vinted"):
-   Clarify immediately. Fleek is for SOURCING stock, not selling it.
-   "Fleek is actually where you source the stock you sell on Vinted. Most of our sellers use both."
-   Then book a call with specific times.
+COMMERCIAL RULES:
 
-4. PLATFORM OBJECTION ("already on another platform"):
-   Never accept this as a no. Handle it directly.
-   "Most of our best customers were already using other platforms when they joined. Fleek gives you access to stock and suppliers you simply cannot get anywhere else."
-   Then book a call with specific times.
+1. BUYING SIGNAL: Answer with enthusiasm. Book call with two specific times OR ask for contact details to send info.
+2. QUESTION: Answer it directly and completely. Then migrate to unlimited channel.
+3. MISUNDERSTANDING (Vinted): Clarify Fleek is for sourcing not selling. "Fleek is where you source the stock you sell on Vinted."
+4. PLATFORM OBJECTION: Handle directly. "Most customers use multiple platforms. Fleek gives you stock you cannot get anywhere else."
+5. TIMING: Acknowledge, send content, set specific reminder date.
+6. SOFT NO: No pressure. Content sent. 30 day reminder.
+7. HARD NO: Return SKIP only.
 
-5. TIMING ISSUE ("Too busy this season", "maybe next month", "Owner is back next week"):
-   Acknowledge without pressure. Send content. Set reminder.
-   "Completely understand. I will send over some info so you have it when the time is right. I will check back in with you in [timeframe]."
+KEY FLEEK FACTS:
+- Everything included in listing price, no hidden fees
+- Buy now pay later up to 45 days, no interest
+- FleekSort grades every item before delivery
+- Exclusive wholesale stock not available elsewhere
 
-6. SOFT NO ("not interested right now"):
-   No pressure. Send content. Set 30 day reminder.
-   "No problem at all. I will send over some info in case it is useful down the line. I will check back in with you in a few weeks."
-
-7. HARD NO ("stop messaging me", "remove me"):
-   Do not draft a message. Return SKIP.
-
-TONE RULES:
-- Instagram DMs: casual, friendly, under 80 words, no corporate language
-- Emails: professional but warm, under 150 words, personalised opener
-- Never use "I hope this message finds you well"
-- Never use "I wanted to reach out"
-- Always end with a specific action, never an open question
-- Reference something specific about the lead when possible"""
+TONE:
+- DMs: casual, under 80 words, no corporate language, real person
+- Emails: professional but warm, personalised opener
+- Never: "I hope this finds you well" or "I wanted to reach out"
+- Always end with a specific action"""
 
 
 def draft_message(lead, channel='dm'):
@@ -155,30 +178,66 @@ def draft_message(lead, channel='dm'):
             'channel': channel
         }
 
+    # -------------------------------------------------------
+    # CONTACT DATA CHECK — IF/ELSE for channel migration
+    # -------------------------------------------------------
+    # If we already have their email or phone, skip asking
+    # for it. Instead tell them we proactively sent the info
+    # to that address. Much more impressive than asking.
+    existing_email = lead.get('email', '') or ''
+    existing_phone = lead.get('phone', '') or ''
+    notes = lead.get('notes', '') or ''
+
+    # Extract email from notes if present
+    import re
+    notes_email = ''
+    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    if notes:
+        matches = re.findall(email_pattern, str(notes))
+        if matches:
+            notes_email = matches[0]
+
+    known_contact = existing_email or existing_phone or notes_email
+    known_contact = str(known_contact).strip()
+    has_contact = bool(known_contact and known_contact not in ['nan', ''])
+
+    if has_contact:
+        channel_migration = f"contact_known: We already have their details ({known_contact}). Tell them you have proactively sent the wholesale information to that specific address. Do not ask for contact details."
+    else:
+        channel_migration = "contact_unknown: Ask for their best email or WhatsApp to send wholesale info. Use: 'what is the best email or WhatsApp to drop that straight into?'"
+
+    # Determine message category
+    if reply_type in ['hot', 'warm']:
+        category = "CATEGORY 2 — Active conversation. Answer their question directly, then migrate to unlimited channel."
+    else:
+        category = "CATEGORY 1 — Cold outreach. High-value hook specific to their account. No contact request on first touch."
+
     # Build the prompt
     if channel == 'dm':
         lead_description = f"Instagram reseller @{handle}"
         if followers:
             lead_description += f" ({int(float(followers)):,} followers)"
-        channel_instruction = "Write a casual Instagram DM under 80 words. Sound like a real person not a corporation."
+        channel_instruction = "Write a casual Instagram DM. Sound like a real person not a corporation."
     else:
         lead_description = f"{store_name} in {city}" if store_name else f"vintage store in {city}"
-        channel_instruction = "Write a professional but warm email under 150 words. Include a subject line on the first line starting with 'Subject:'"
+        channel_instruction = "Write a professional but warm email. Include a subject line on the first line starting with 'Subject:'"
 
     context = f"""Lead: {lead_description}
 Contact name: {name}
 Current stage: {stage}
 Last message they sent: "{last_message}"
 Reply classification: {reply_type}
+Message category: {category}
 Objection type: {objection_type}
-Recommended follow up: {follow_up_timing}
+Channel migration instruction: {channel_migration}
+Notes about this lead: {notes}
 Channel: {channel_instruction}"""
 
     prompt = f"""{context}
 
-Draft the outreach message following the commercial rules exactly.
+Draft the outreach message following the commercial rules and channel migration strategy exactly.
 Also provide:
-- next_action: what to do after sending this (e.g. "Wait for reply", "Set 30 day reminder", "Book call for Thursday")
+- next_action: what to do after sending this
 - follow_up_date: when to follow up (today, 7_days, 30_days, 60_days, never)
 
 Return ONLY a JSON object:
@@ -220,79 +279,142 @@ def fallback_draft(lead, channel, stage, reply_type, objection_type,
                    last_message, name, handle, store_name, city):
     """
     Rule based fallback if the Claude API call fails.
-    Uses Aaron's commercial logic directly.
+    Implements full channel migration strategy and contact data check.
     """
     display_name = name or handle or store_name or 'there'
-    greeting = f"Hey {display_name}" if channel == 'dm' else f"Hi {display_name}"
-
+    greeting = f"Hey @{handle or display_name}" if channel == 'dm' else f"Hi {display_name}"
     msg = str(last_message).lower() if last_message and str(last_message) != 'nan' else ''
 
+    # -------------------------------------------------------
+    # CONTACT DATA CHECK for channel migration
+    # -------------------------------------------------------
+    existing_email = str(lead.get('email', '') or '').strip()
+    existing_phone = str(lead.get('phone', '') or '').strip()
+    has_email = existing_email and existing_email not in ['nan', '']
+    has_phone = existing_phone and existing_phone not in ['nan', '']
+
+    if has_email:
+        migration_line = f"I'll get that sent straight over to {existing_email} now."
+        has_contact = True
+    elif has_phone:
+        migration_line = f"I'll drop that straight into WhatsApp on {existing_phone} now."
+        has_contact = True
+    else:
+        migration_line = "What's the best email or WhatsApp to send that straight over to?"
+        has_contact = False
+
+    # -------------------------------------------------------
+    # CATEGORY 1 — Cold outreach (new or amber, no reply yet)
+    # High value hook. No contact request on first touch.
+    # -------------------------------------------------------
+    if reply_type in ['new', 'amber', 'none']:
+        if channel == 'dm':
+            notes = str(lead.get('notes', '') or '').lower()
+            if 'menswear' in notes:
+                hook = "love your menswear curation"
+            elif 'high engagement' in notes:
+                hook = "love the engagement your drops are getting"
+            elif 'big consignment' in notes:
+                hook = "love the volume you are moving"
+            else:
+                hook = "love what you are doing with your page"
+            message = f"{greeting}, {hook}. We work with resellers like you to make sourcing vintage wholesale easier — graded stock, no market trips, exclusive drops you cannot get elsewhere. Worth a quick look?"
+            return {'message': message, 'next_action': 'Wait for reply, follow up in 7 days',
+                    'follow_up_date': '7_days', 'channel': channel}
+        else:
+            subject = f"Subject: Wholesale sourcing for {store_name or city}"
+            message = f"{subject}\n\n{greeting},\n\nI came across {store_name or 'your store'} in {city} and wanted to reach out. We work with independent vintage stores to replace manual sourcing with a digital wholesale marketplace. Graded stock, FleekSort categorised, no market trips.\n\nWorth a quick call? I have time Thursday at 2pm or Friday morning.\n\nAaron"
+            return {'message': message, 'next_action': 'Follow up by call in 3 days',
+                    'follow_up_date': '7_days', 'channel': channel}
+
+    # -------------------------------------------------------
+    # CATEGORY 2 — Active conversations (hot or warm replies)
+    # Answer their question, then migrate to unlimited channel.
+    # -------------------------------------------------------
+
+    # Hard no
+    if reply_type == 'cold':
+        return {'message': 'SKIP — hard no, mark as Lost',
+                'next_action': 'Mark as Lost, no further contact',
+                'follow_up_date': 'never', 'channel': channel}
+
+    # Payout or commission question
+    if 'payout' in msg or 'commission' in msg or 'fee structure' in msg:
+        if has_contact:
+            message = f"{greeting}, great question — everything is included in the listing price, no hidden fees, BNPL up to 45 days with no interest. {migration_line}"
+        else:
+            message = f"{greeting}, great question — everything is included in the listing price, no hidden fees, BNPL up to 45 days no interest. {migration_line}"
+        return {'message': message, 'next_action': 'Send price sheet to contact details',
+                'follow_up_date': 'today', 'channel': channel}
+
+    # EU shipping question
+    if 'ship' in msg or 'eu' in msg:
+        if has_contact:
+            message = f"{greeting}, yes we ship to EU — duties and taxes all included in the listing price, no surprises on delivery. Sending the full EU shipping breakdown to {existing_email or existing_phone} now."
+        else:
+            message = f"{greeting}, yes we ship to EU — duties and taxes all included in the listing price, no surprises. {migration_line}"
+        return {'message': message, 'next_action': 'Send EU shipping info',
+                'follow_up_date': 'today', 'channel': channel}
+
+    # Brands question
+    if 'brand' in msg or 'menswear' in msg:
+        if has_contact:
+            message = f"{greeting}, we carry Ralph Lauren, Carhartt, Nike, Levi's, Adidas and more. FleekSort grades everything before delivery. Sending the full catalogue to {existing_email or existing_phone} now."
+        else:
+            message = f"{greeting}, we carry Ralph Lauren, Carhartt, Nike, Levi's and more. FleekSort grades every item before delivery. {migration_line}"
+        return {'message': message, 'next_action': 'Send catalogue',
+                'follow_up_date': 'today', 'channel': channel}
+
+    # Bundle or catalogue request
+    if 'bundle' in msg or 'catalogue' in msg or 'send me' in msg:
+        if has_contact:
+            message = f"{greeting}, on it — sending the bundle list and wholesale catalogue straight to {existing_email or existing_phone} now."
+        else:
+            message = f"{greeting}, absolutely. {migration_line} I'll get the bundle list sent straight over."
+        return {'message': message, 'next_action': 'Send bundle list',
+                'follow_up_date': 'today', 'channel': channel}
+
     # Buying signal
-    if reply_type == 'hot' or any(phrase in msg for phrase in
-       ['yeah keen', 'sounds good', 'when can we talk', 'ok sounds good']):
-        message = f"{greeting}, really glad to hear it. I'd love to walk you through how Fleek works. I have time Thursday at 2pm or Friday morning, does either work for you?"
-        return {'message': message, 'next_action': 'Book call — respond today',
+    if reply_type == 'hot':
+        if has_contact:
+            message = f"{greeting}, great to hear it. Getting our wholesale info sent straight to {existing_email or existing_phone} now — take a look and let me know when works for a call."
+        else:
+            message = f"{greeting}, great to hear it. {migration_line} Once you have got our info I can walk you through the rest on a call — Thursday at 2pm or Friday morning work?"
+        return {'message': message, 'next_action': 'Send info, book call',
                 'follow_up_date': 'today', 'channel': channel}
 
-    # Question about payout
-    if 'payout' in msg or 'commission' in msg:
-        message = f"{greeting}, great question. On Fleek everything is included in the listing price, shipping, duties and taxes, no hidden fees. We also offer buy now pay later up to 45 days with no interest. I'd love to walk you through your first order. I have time Thursday at 2pm or Friday morning, does either work?"
-        return {'message': message, 'next_action': 'Book call — answer sent',
-                'follow_up_date': 'today', 'channel': channel}
-
-    # Question about brands
-    if 'brand' in msg:
-        message = f"{greeting}, we carry a wide range of branded vintage including Ralph Lauren, Nike, Carhartt, Adidas and more. FleekSort grades every item so you know exactly what you are getting before it arrives. I'd love to show you what is available. I have time Thursday or Friday morning, does either work?"
-        return {'message': message, 'next_action': 'Book call — answer sent',
-                'follow_up_date': 'today', 'channel': channel}
-
-    # Misunderstanding — already sell on Vinted
+    # Misunderstanding — Vinted
     if 'vinted' in msg or 'sell on' in msg:
-        message = f"{greeting}, great to hear you are on Vinted. Fleek is actually the other side of that equation, it is where you source the stock you sell on Vinted. Most of our sellers use both. I'd love to show you how it works. I have time Thursday or Friday morning, does either work?"
-        return {'message': message, 'next_action': 'Book call — objection handled',
+        message = f"{greeting}, great to hear you are on Vinted — Fleek is actually the other side of that. It is where you source the stock you sell on Vinted. Most of our sellers use both. {migration_line}"
+        return {'message': message, 'next_action': 'Send info, clarification sent',
                 'follow_up_date': 'today', 'channel': channel}
 
     # Platform objection
     if 'another platform' in msg or 'already on' in msg:
-        message = f"{greeting}, totally get that. Most of our best customers were already using other platforms when they joined. Fleek gives you access to stock and suppliers you simply cannot get anywhere else. I'd love to show you. I have time Thursday or Friday morning, does either work?"
-        return {'message': message, 'next_action': 'Book call — objection handled',
+        message = f"{greeting}, totally get that. Where Fleek stands apart is the stock itself — graded vintage wholesale you cannot source anywhere else, with FleekSort categorising every item before it arrives. Would love to show you what is coming through. Would you have a quick 10 minutes for a call this week?"
+        return {'message': message, 'next_action': 'Book a call — objection handled with differentiation',
                 'follow_up_date': 'today', 'channel': channel}
 
     # Timing objection
-    if any(phrase in msg for phrase in ['busy', 'next month', 'try later', 'back next week']):
-        message = f"{greeting}, completely understand, no pressure at all. I will send over some info so you have it when the time is right. I will check back in with you in a few weeks."
-        return {'message': message, 'next_action': 'Send Fleek one-pager, set 30 day reminder',
+    if any(phrase in msg for phrase in ['busy', 'next month', 'try later', 'back next week', 'slow season']):
+        message = f"{greeting}, completely understand, no pressure. I will send over some info so you have it when the time is right. I will check back in with you in a few weeks."
+        return {'message': message, 'next_action': 'Send content, set 30 day reminder',
                 'follow_up_date': '30_days', 'channel': channel}
 
-    # Soft no
-    if 'not interested' in msg:
+    # Not taking on new channels
+    if 'not taking on' in msg or 'not interested right now' in msg:
         message = f"{greeting}, no problem at all. I will send over some info in case it is useful down the line. I will check back in with you in a few weeks."
         return {'message': message, 'next_action': 'Send content, set 30 day reminder',
                 'follow_up_date': '30_days', 'channel': channel}
 
-    # Hold stage — was previously marked Lost but had an unanswered message
-    # These were recovered by the stage reconciliation step in clean_pipeline.py
-    # Treat them like warm leads — acknowledge, send content, follow up
+    # Hold stage — recovered from Lost, re-engagement
     if stage == 'Hold':
-        message = f"{greeting}, following up on our previous conversation. I wanted to send over some info about Fleek in case the timing is better now. I would love to show you how it works — I have time Thursday at 2pm or Friday morning, does either work?"
-        return {'message': message, 'next_action': 'Send content, set 14 day reminder — previously marked Lost incorrectly',
+        message = f"{greeting}, following up as promised. I wanted to send over some info about Fleek in case the timing is better now. {migration_line}"
+        return {'message': message, 'next_action': 'Send info, 14 day reminder',
                 'follow_up_date': '14_days', 'channel': channel}
 
-    # New lead — first contact DM
-    if stage == 'New' and channel == 'dm':
-        message = f"Hey {handle or display_name}, came across your page and love what you are doing. We work with resellers like you to make sourcing vintage wholesale easier. Fleek gives you access to graded stock you can browse and order digitally, no more market trips. I'd love to show you. I have time Thursday or Friday morning, does either work?"
-        return {'message': message, 'next_action': 'Wait for reply',
-                'follow_up_date': '7_days', 'channel': channel}
-
-    # New lead — first contact email
-    if stage == 'New' and channel == 'email':
-        subject = f"Subject: Sourcing stock for {store_name or city}"
-        message = f"{subject}\n\n{greeting},\n\nI came across {store_name or 'your store'} in {city} and wanted to reach out. We work with independent vintage stores to replace manual sourcing with a digital wholesale marketplace. Graded stock you can browse and order without the market trips, FleekSort means every item is categorised and priced before it arrives.\n\nI'd love to show you how it works. I have time Thursday at 2pm or Friday morning, does either work for you?\n\nAaron"
-        return {'message': message, 'next_action': 'Wait for reply, follow up by call in 3 days',
-                'follow_up_date': '7_days', 'channel': channel}
-
-    # Default
-    message = f"{greeting}, just following up on our conversation. I'd love to show you how Fleek works. I have time Thursday at 2pm or Friday morning, does either work for you?"
+    # Default warm follow up
+    message = f"{greeting}, just following up. {migration_line} Happy to walk you through everything on a quick call — Thursday at 2pm or Friday morning?"
     return {'message': message, 'next_action': 'Wait for reply',
             'follow_up_date': '7_days', 'channel': channel}
 
