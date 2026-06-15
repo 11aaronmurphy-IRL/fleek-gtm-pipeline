@@ -318,135 +318,216 @@ print(f"  Lead types: {dict(type_counts)}")
 # reps, not just formatting errors in the data.
 
 # ============================================================
-# SIGNAL LISTS FOR STAGE RECONCILIATION
+# SIGNAL CLASSIFICATION — THREE LAYER APPROACH
 # ============================================================
-# These lists power the reconciliation logic that cross-checks
-# every lead's stage label against what was actually said.
-# Built from real examples found in this pipeline during testing.
+# Built to scale from 265 leads to 30,000+
+#
+# LAYER 1: Exact matches for all 25 known messages in this pipeline
+# Zero ambiguity — every known message maps to exactly one bucket
+# Based on manual review of every unique last_inbound_text
+#
+# LAYER 2: Keyword patterns for new messages not seen before
+# Catches variations like "yeah sounds great when can we chat"
+# even if that exact phrase is not in Layer 1
+#
+# LAYER 3: Claude API fallback for anything that does not match
+# Any genuinely unknown message gets classified by AI
+# One API call per unknown message — scales automatically
+#
+# THE BUCKETS (agreed after reviewing all 25 messages):
+# MEETING BOOKED: specific day, time or clear call/visit commitment
+# REPLIED HOT:    buying signal or question, act today
+# REPLIED WARM:   replied but needs handling, not urgent
+# HOLD:           timing issue or soft no, follow up later
+# LOST:           explicit hard no only
 
-# ============================================================
-# SIGNAL LISTS — BUILT FROM ACTUAL MESSAGES IN THIS PIPELINE
-# ============================================================
-# Every unique last_inbound_text was reviewed manually.
-# Each message is assigned to exactly one category.
-# These lists must be tight — wrong classification wastes
-# DM limit or misses a hot lead entirely.
+# ---------------------------------------------------------------
+# LAYER 1: EXACT MATCHES
+# All 25 unique messages from this pipeline classified manually
+# ---------------------------------------------------------------
 
-# MEETING BOOKED — specific time or visit explicitly confirmed
-# Only add to this list if a day, time or clear commitment exists
-# "can you do a call fri?" is a REQUEST not a confirmation → HOT
-# "Happy to chat" alone is not confirmed → needs a time → HOT
-MEETING_SIGNALS = [
-    'sure, pop in on thursday',
-    'sure, pop in on friday',
-    'sure, pop in',
-    'pop in on thursday',
-    'pop in on friday',
-    'happy to chat, mornings best',
-    'happy to chat, afternoons best',
-    'mornings best',
-    'afternoons best',
-    'owner is back next week, call then',
-    'call then',
-    # They are requesting a call — treat as meeting booked
-    'can you do a call fri',
-    'can you do a call',
-]
-
-# HOT SIGNALS — buying signal or open question, respond today
-# These are leads that have shown real interest or asked a
-# specific question. Every one of these needs a reply today.
-# Based on actual messages found in this pipeline:
-HOT_SIGNALS = [
-    # Direct buying interest
-    'yeah keen, drop details',
-    'yeah keen',
+EXACT_MEETING = [
+    'happy to chat, mornings best.',
+    'sure, pop in on thursday.',
+    'can you do a call fri?',
     'ok sounds good when can we talk',
-    'ok sounds good',
-    'send me the bundle list',
-    'bundle list',
-    # Questions about the product — they are evaluating
-    'do you ship to eu',
-    'do you ship',
-    'do you take menswear',
-    'what brands do you take',
-    'what brands',
+]
+
+EXACT_HOT = [
+    'interested - send pricing.',
+    'thanks, can you email a one-pager?',
+    "what's the fee structure?",
+    'do you ship to eu?',
+    'do you take menswear too',
     'how does payout work',
-    'how much for the whole bundle',
-    'how much',
-    "what's the fee structure",
-    'fee structure',
-    'whats your commission',
-    'commission',
-    'payout',
-    # Sceptical but engaged — asking means considering
-    'whats the catch',
-    "what's the catch",
-    'what is the catch',
-    # Interested with a timing caveat — still hot
+    'how much for the whole bundle?',
     'interested but busy this week',
-    'interested - send pricing',
-    'interested',
-    # Call requests — they are initiating a meeting
-    'when can we talk',
-    # Other buying signals
-    'send me', 'bundle', 'catalogue', 'catalog',
-    'how does it work', 'menswear', 'womenswear',
-    'minimum order', 'moq', 'sample', 'demo',
+    'send me the bundle list',
+    'what brands do you take?',
+    'whats the catch lol',
+    'whats your commission?',
+    'yeah keen, drop details',
 ]
 
-# HARD NOS — only these get marked Lost
-# Everything else is Hold or Replied
-HARD_NOS = [
-    'stop messaging',
-    'remove me',
-    'not for us ever',
-    'never contact',
-    'do not contact',
-    'unsubscribe',
-    'please stop',
-    'leave us alone',
-]
-
-# WARM/HOLD SIGNALS — objection or timing, needs handling
-# These are NOT dead. They need a specific response.
-# Platform objection → clarify Fleek is for sourcing not selling
-# Timing → acknowledge, send content, set reminder
-WARM_SIGNALS = [
-    # Misunderstandings about what Fleek is
-    'we already sell on vinted',
-    'already sell on vinted',
-    'sell on vinted',
-    'already on vinted',
-    'we use vinted',
-    # Platform objections
-    'already on another platform',
-    'another platform',
-    'not taking on new channels',
-    # Timing issues
-    'not interested right now',
-    'not right now',
-    'too busy this season',
-    'too busy',
-    'next month',
-    'try later',
-    'maybe next month',
-    'maybe later',
-    'slow season',
-    # Undecided
+EXACT_WARM = [
+    'owner is back next week, call then.',
+    'we already sell on vinted.',
+    'already on another platform tbh',
     'need to think about it',
-    'need to think',
-    # Wants info before deciding — not a meeting, needs follow up
-    'thanks, can you email a one-pager',
-    'can you email a one-pager',
-    'one-pager',
-    'send more info',
-    'email me',
 ]
+
+EXACT_HOLD = [
+    'not taking on new channels currently.',
+    'too busy this season, try later.',
+    'maybe next month',
+    'not interested right now',
+]
+
+EXACT_LOST = []
+
+# ---------------------------------------------------------------
+# LAYER 2: KEYWORD PATTERNS
+# For new messages not seen before — catches variations
+# Order matters: LOST first, then MEETING, then HOLD, then WARM, then HOT
+# ---------------------------------------------------------------
+
+LOST_KEYWORDS = [
+    'stop messaging', 'stop contacting', 'remove me',
+    'unsubscribe', 'do not contact', 'please stop',
+    'leave us alone', 'never contact', 'not for us ever',
+]
+
+MEETING_KEYWORDS = [
+    'pop in', 'mornings best', 'afternoons best', 'evenings best',
+    'thursday', 'friday', 'monday', 'tuesday', 'wednesday', 'saturday',
+    'morning works', 'afternoon works', 'can we meet', 'lets meet',
+    "let's meet", 'can you do a call', 'do a call', 'schedule a call',
+    'book a call', 'hop on a call', 'jump on a call',
+    'when are you free', 'what time works', 'ok sounds good',
+    'sounds good, when',
+]
+
+HOLD_KEYWORDS = [
+    'too busy', 'busy season', 'next month', 'next quarter',
+    'try again', 'try later', 'come back', 'check back',
+    'not right now', 'not at the moment', 'not currently',
+    'slow season', 'quiet period', 'not interested',
+    'dont think', "don't think", 'not for us',
+    'not what we need', 'not looking for',
+]
+
+WARM_KEYWORDS = [
+    'vinted', 'already sell', 'we sell on', 'already on another',
+    'another platform', 'already use', 'not taking on',
+    'already have a supplier', 'need to think', 'think about it',
+    'not sure yet', 'maybe', 'perhaps',
+]
+
+HOT_KEYWORDS = [
+    'fee structure', 'commission', 'payout', 'how does it work',
+    'what brands', 'do you ship', 'do you take', 'menswear',
+    'womenswear', 'how much', 'bundle', 'catalogue', 'catalog',
+    'minimum order', 'moq', 'sample', 'pricing', 'price list',
+    'yeah keen', 'sounds good', 'interested', 'send me',
+    'drop details', 'tell me more', 'more info',
+    'whats the catch', "what's the catch",
+    'one-pager', 'brochure', 'overview',
+    'busy this week', 'busy today', 'busy tomorrow',
+]
+
+# ---------------------------------------------------------------
+# LAYER 3: CLAUDE API FALLBACK
+# Unknown messages get classified by AI — never miss a lead
+# ---------------------------------------------------------------
+
+def classify_with_api(message):
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model='claude-sonnet-4-6',
+            max_tokens=10,
+            system="""You classify sales messages into exactly one category.
+Reply with only the category name, nothing else.
+
+MEETING_BOOKED - specific day, time or clear call/visit commitment
+REPLIED_HOT - buying signal or product question, act today
+REPLIED_WARM - replied but needs careful handling, not urgent
+HOLD - timing issue or soft no, follow up in 30 days
+LOST - explicit hard no, stop messaging
+
+Context: Messages from vintage clothing resellers responding to
+outreach from Fleek, a B2B vintage wholesale marketplace.""",
+            messages=[{'role': 'user', 'content': f'Classify: "{message}"'}]
+        )
+        return response.content[0].text.strip()
+    except:
+        return 'REPLIED_HOT'
+
+def classify_message(msg):
+    """
+    Three layer classification.
+    Returns (stage, reply_type, layer_used)
+
+    Reply types:
+    - hot:   buying signal, act today
+    - warm:  objection or timing, needs handling
+    - amber: no message at all — we do not know where they stand
+    - none:  new lead, no contact yet
+    - cold:  hard no
+    """
+    if not msg or str(msg).strip().strip("'`\"") in ['', 'nan']:
+        return None, 'amber', 0  # No message = amber, we do not know their intent
+
+    msg_clean = str(msg).strip().lower()
+
+    # Layer 1: Exact matches
+    if msg_clean in [m.lower() for m in EXACT_MEETING]:
+        return 'Meeting Booked', 'hot', 1
+    if msg_clean in [m.lower() for m in EXACT_HOT]:
+        return 'Replied', 'hot', 1
+    if msg_clean in [m.lower() for m in EXACT_WARM]:
+        return 'Replied', 'warm', 1
+    if msg_clean in [m.lower() for m in EXACT_HOLD]:
+        return 'Hold', 'warm', 1
+    if msg_clean in [m.lower() for m in EXACT_LOST]:
+        return 'Lost', 'cold', 1
+
+    # Layer 2: Keywords (order: Lost → Meeting → Hold → Warm → Hot)
+    if any(kw in msg_clean for kw in LOST_KEYWORDS):
+        return 'Lost', 'cold', 2
+    if any(kw in msg_clean for kw in MEETING_KEYWORDS):
+        return 'Meeting Booked', 'hot', 2
+    if any(kw in msg_clean for kw in HOLD_KEYWORDS):
+        return 'Hold', 'warm', 2
+    if any(kw in msg_clean for kw in WARM_KEYWORDS):
+        return 'Replied', 'warm', 2
+    if any(kw in msg_clean for kw in HOT_KEYWORDS):
+        return 'Replied', 'hot', 2
+
+    # Layer 3: API fallback
+    api_result = classify_with_api(msg)
+    bucket_map = {
+        'MEETING_BOOKED': ('Meeting Booked', 'hot'),
+        'REPLIED_HOT': ('Replied', 'hot'),
+        'REPLIED_WARM': ('Replied', 'warm'),
+        'HOLD': ('Hold', 'warm'),
+        'LOST': ('Lost', 'cold'),
+    }
+    bucket, reply_type = bucket_map.get(api_result, ('Replied', 'hot'))
+    return bucket, reply_type, 3
+
+# Backward compatibility
+MEETING_SIGNALS = EXACT_MEETING + MEETING_KEYWORDS
+HOT_SIGNALS = EXACT_HOT + HOT_KEYWORDS
+HARD_NOS = LOST_KEYWORDS
+WARM_SIGNALS = EXACT_HOLD + EXACT_WARM + HOLD_KEYWORDS + WARM_KEYWORDS
 
 def reconcile_stage(row):
     stage = row['stage']
-    msg = str(row.get('last_inbound_text', '') or '').lower().strip()
+    # Strip leading apostrophes and handle nan values
+    raw_msg = str(row.get('last_inbound_text', '') or '').strip().strip("'`\"").strip()
+    msg = '' if raw_msg.lower() in ['nan', 'none', ''] else raw_msg.lower()
     num_touches = int(row.get('num_touches', 0) or 0)
     spend = float(str(row.get('est_monthly_spend_gbp', 0) or 0).replace('£','').replace(',','') or 0)
 
@@ -485,44 +566,66 @@ def reconcile_stage(row):
     # Negotiating is absorbed into Replied.
     # ============================================================
 
-    # STEP 1: Check for meeting confirmation signals first
-    # These take priority over everything else
-    # "Sure, pop in on Thursday" and "Happy to chat, mornings best"
-    # are confirmed meetings regardless of what stage label says
-    if msg and any(phrase in msg for phrase in MEETING_SIGNALS):
-        return 'Meeting Booked', True
+    # THE GOLDEN RULE: Last message always wins over stage label.
+    # We check the message against every signal list regardless
+    # of what stage the BDR assigned. This catches cases like:
+    # - "call-booked" with last message "do you ship to EU?" → Replied
+    # - "call-booked" with last message "Too busy this season" → Hold
+    # - "Won" with last message "whats your commission?" → Replied
+    # - "Lost" with last message "yeah keen drop details" → Replied
 
-    # STEP 2: Hard no — only these are truly Lost
+    # STEP 1: Hard no — only these are truly Lost, override everything
     if msg and any(phrase in msg for phrase in HARD_NOS):
-        return 'Lost', False
+        return 'Lost', stage != 'Lost'
 
-    # STEP 3: Negotiating — merge into Replied
-    # There is no evidence of genuine negotiation in this pipeline
-    # Anyone in Negotiating either has a buying signal (Replied)
-    # or a warm/timing signal (Hold/Replied)
-    if stage == 'Negotiating':
-        if not msg:
-            return 'Replied', True
-        if any(phrase in msg for phrase in WARM_SIGNALS):
-            return 'Hold', True
-        return 'Replied', True
+    # STEP 2: Warm/Hold signals — override ANY stage including Meeting Booked
+    # "Too busy this season" in call-booked = BDR was wrong → Hold
+    # "We already sell on Vinted" in Negotiating = misunderstanding → Hold
+    if msg and any(phrase in msg for phrase in WARM_SIGNALS):
+        return 'Hold', stage != 'Hold'
 
-    # STEP 4: Won — check if deal is actually closed
+    # STEP 3: Meeting confirmed — only after ruling out warm signals
+    # A specific day, time or clear availability given
+    if msg and any(phrase in msg for phrase in MEETING_SIGNALS):
+        return 'Meeting Booked', stage != 'Meeting Booked'
+
+    # STEP 4: Hot signals — buying signal or question → Replied
+    # "do you ship to EU?" in call-booked = BDR was wrong → Replied
+    if msg and any(phrase in msg for phrase in HOT_SIGNALS):
+        return 'Replied', stage != 'Replied'
+
+    # STEP 5: Replied/Warm/Negotiating with NO message
+    # AND New with touches > 0 — both mean contacted but no reply
+    # BDR marked stage without evidence of a real reply.
+    #
+    # num_touches = 0 → New (genuinely never contacted)
+    # num_touches > 0 → Contacted (we reached out, no reply received)
+    if not msg:
+        if stage in ['Replied', 'Warm', 'Negotiating']:
+            # BDR marked replied without getting a reply
+            return ('New' if num_touches == 0 else 'Contacted'), True
+        if stage == 'New' and num_touches > 0:
+            # BDR marked New but touches show we already contacted them
+            return 'Contacted', True
+
+    # STEP 6: Won with no message = keep Won
+    # Won with follow up language = move to Replied
     if stage == 'Won':
         if not msg:
             return 'Won', False
-        if any(phrase in msg for phrase in HOT_SIGNALS):
-            return 'Replied', True
         follow_up = ['email', 'one-pager', 'send over', 'more info',
                     'details', 'pricing', 'price', 'how does', 'can you']
         if any(phrase in msg for phrase in follow_up):
             return 'Replied', True
         return 'Won', False
 
-    # STEP 5: Lost — check if actually dead
+    # STEP 6: Negotiating with no message — merge into Replied
+    if stage == 'Negotiating':
+        return 'Replied', True
+
+    # STEP 7: Lost with blank message — use touches and spend
     if stage == 'Lost':
         if not msg:
-            # Blank message on Lost — use touches and spend
             if num_touches <= 1 and spend >= 3000:
                 return 'Hold', True
             if num_touches >= 5:
@@ -530,35 +633,17 @@ def reconcile_stage(row):
             if spend >= 5000 and num_touches <= 4:
                 return 'Hold', True
             return 'Lost', False
-        if any(phrase in msg for phrase in HOT_SIGNALS):
-            return 'Replied', True
-        if any(phrase in msg for phrase in WARM_SIGNALS):
-            return 'Hold', True
         if len(msg) > 3:
             return 'Hold', True
         return 'Lost', False
 
-    # STEP 6: Contacted — check if they actually replied
+    # STEP 8: Contacted with any reply — move to Replied
     if stage == 'Contacted':
-        if not msg:
-            return 'Contacted', False
-        if any(phrase in msg for phrase in HOT_SIGNALS):
-            return 'Replied', True
-        if any(phrase in msg for phrase in WARM_SIGNALS):
-            return 'Hold', True
-        if len(msg) > 3:
+        if msg and len(msg) > 3:
             return 'Replied', True
         return 'Contacted', False
 
-    # STEP 7: Hold — check if actually a hot signal hiding in there
-    if stage == 'Hold':
-        if not msg:
-            return 'Hold', False
-        if any(phrase in msg for phrase in HOT_SIGNALS):
-            return 'Replied', True
-        return 'Hold', False
-
-    # All other stages — keep as is
+    # STEP 9: Keep everything else as is
     return stage, False
 
 reconciliation_results = df.apply(
@@ -566,6 +651,99 @@ reconciliation_results = df.apply(
 )
 df['stage'] = [r[0] for r in reconciliation_results]
 df['stage_overridden'] = [r[1] for r in reconciliation_results]
+
+# ============================================================
+# ASSIGN REPLY TYPE TO EVERY LEAD — NO GAPS
+# ============================================================
+# Every lead must have a reply type. No lead should be uncategorised.
+# Hot:   buying signal in last message, act today
+# Warm:  objection or timing issue, needs handling
+# Amber: no last message at all — we do not know their intent
+# None:  physical shop (different channel, different logic)
+# Cold:  explicit hard no
+
+def get_reply_type(row):
+    msg = str(row.get('last_inbound_text', '') or '').strip().strip("'`\"")
+    num_touches = int(str(row.get('num_touches', 0) or 0).strip() or 0)
+
+    # No message — determine if truly new or contacted with no reply
+    # Blue  = num_touches is 0 AND no notes — genuinely never touched
+    # Amber = num_touches > 0 OR has notes — we know something about them
+    #         or we reached out and heard nothing back
+    if not msg or msg.lower() in ['', 'nan']:
+        notes = str(row.get('notes', '') or '').strip()
+        has_notes = notes and notes.lower() not in ['', 'nan']
+        if num_touches == 0 and not has_notes:
+            return 'new'
+        else:
+            return 'amber'
+
+    stage, reply_type, layer = classify_message(msg)
+
+    # -------------------------------------------------------
+    # DATE-BASED URGENCY ADJUSTMENT
+    # -------------------------------------------------------
+    # Commercial rule: hot and warm leads should never go
+    # more than 7 days without contact. If they do the rep
+    # dropped the ball. Surface them as urgent immediately.
+    #
+    # Uses last_touch_date — real data, not a proxy.
+    #
+    # Hot + last_touch within 7 days → Hot, actively worked
+    # Hot + last_touch over 7 days → Hot OVERDUE, chase today
+    # Warm + last_touch within 7 days → Warm, actively worked
+    # Warm + last_touch over 7 days → Upgrade to Hot OVERDUE
+    #   A warm lead ignored for over a week is now urgent
+    #
+    # Goal: turn hot leads into meetings, warm into hot.
+    # 7 days is the maximum gap for any interested lead.
+    # -------------------------------------------------------
+    if reply_type in ['hot', 'warm']:
+        try:
+            # Never upgrade Hold stage leads — they are on Hold for a reason
+            # "not interested right now" stays warm regardless of last_touch_date
+            # The date urgency only applies to genuinely interested leads
+            current_stage = str(row.get('stage', '') or '').strip()
+            if current_stage == 'Hold':
+                pass  # Keep reply_type as is for Hold leads
+            else:
+                last_touch = str(row.get('last_touch_date', '') or '').strip()
+                if last_touch and last_touch.lower() not in ['', 'nan', 'none']:
+                    last_touch_date = pd.to_datetime(last_touch, dayfirst=True, errors='coerce')
+                    if pd.notna(last_touch_date):
+                        days_since = (pd.Timestamp.now() - last_touch_date).days
+                        if days_since > 7:
+                            reply_type = 'hot'
+        except:
+            pass
+
+    return reply_type
+def get_obj_type(row):
+    msg = str(row.get('last_inbound_text', '') or '').strip().strip("'`\"").lower()
+    if not msg or msg == 'nan':
+        return 'none'
+    if any(kw in msg for kw in ['vinted', 'already sell', 'sell on vinted']):
+        return 'misunderstanding'
+    if any(kw in msg for kw in ['another platform', 'already on another']):
+        return 'platform'
+    if any(kw in msg for kw in ['too busy', 'next month', 'try later', 'slow season', 'not right now']):
+        return 'timing'
+    if 'not interested' in msg:
+        return 'soft_no'
+    if any(kw in msg for kw in ['need to think', 'maybe', 'not sure']):
+        return 'undecided'
+    if 'not taking on' in msg:
+        return 'channel_objection'
+    return 'none'
+
+df['reply_type'] = df.apply(get_reply_type, axis=1)
+df['obj_type'] = df.apply(get_obj_type, axis=1)
+
+# Print reply type breakdown
+reply_counts = df[df['lead_type'] != 'physical_shop']['reply_type'].value_counts()
+print(f"\nReply type breakdown (resellers only):")
+for rt, count in reply_counts.items():
+    print(f"  {rt}: {count}")
 
 overridden = df[df['stage_overridden'] == True]
 hot_recovered = df[(df['stage_overridden'] == True) & (df['stage'] == 'Replied')]
