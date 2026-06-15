@@ -221,41 +221,79 @@ else:
 # STEP 7: REMOVE DUPLICATES
 # ============================================================
 # Some leads appear more than once with different lead_IDs.
-# We keep the most recent version of each duplicate based on
-# last_touch_date. If both have no date we keep the first one.
-# We identify duplicates by matching on cleaned handle for
-# resellers and on email for physical shops.
+# FIVE WAY DUPLICATE DETECTION
+# ============================================================
+# Matches the dashboard JavaScript exactly.
+# Checks: lead_id, handle, email, phone, store+city
+# Keeps the first occurrence (most recent after date sort).
+# ============================================================
 
-# For resellers: same handle = duplicate
-# For shops: same email = duplicate
-# We also catch exact lead_id duplicates
-
-# First sort by last_touch_date descending so most recent is first
+# Sort by last_touch_date descending so most recent is kept
 df['last_touch_date_sort'] = pd.to_datetime(df['last_touch_date'], errors='coerce')
 df = df.sort_values('last_touch_date_sort', ascending=False, na_position='last')
+df = df.drop(columns=['last_touch_date_sort'])
 
 before = len(df)
 
-# Remove exact lead_id duplicates keeping most recent
-df = df.drop_duplicates(subset=['lead_id'], keep='first')
+seen_ids = set()
+seen_handles = set()
+seen_emails = set()
+seen_phones = set()
+seen_store_city = set()
+clean_rows = []
 
-# Remove duplicate handles (for resellers)
-reseller_mask = df['handle'] != ''
-df_resellers = df[reseller_mask].drop_duplicates(subset=['handle'], keep='first')
-df_shops = df[~reseller_mask]
-df = pd.concat([df_resellers, df_shops], ignore_index=True)
+for _, row in df.iterrows():
+    lid = str(row.get('lead_id', '') or '').strip()
 
-# Remove duplicate emails (for shops)
-shop_with_email = df['email'].str.len() > 0
-df_with_email = df[shop_with_email].drop_duplicates(subset=['email'], keep='first')
-df_no_email = df[~shop_with_email]
-df = pd.concat([df_with_email, df_no_email], ignore_index=True)
+    # Normalised handle
+    h = str(row.get('handle', '') or '').strip().lower()
+    valid_handle = h and h not in ['', 'nan'] and len(h) > 1
 
+    # Valid email — must contain @
+    email = str(row.get('email', '') or '').strip().lower()
+    while '@@' in email:
+        email = email.replace('@@', '@')
+    valid_email = '@' in email and len(email) > 3
+
+    # Normalised phone — digits only, strip country codes
+    phone_raw = str(row.get('phone', '') or '').strip()
+    phone = ''.join(c for c in phone_raw if c.isdigit())
+    if phone.startswith('44') and len(phone) > 10:
+        phone = '0' + phone[2:]
+    if phone.startswith('0044'):
+        phone = '0' + phone[4:]
+    valid_phone = len(phone) > 5
+
+    # Store plus city
+    store = str(row.get('store_name', '') or '').strip().lower()
+    city = str(row.get('city', '') or '').strip().lower()
+    sc = f'{store}|{city}' if store and city and store != 'nan' and city != 'nan' else ''
+
+    is_dupe = (
+        lid in seen_ids or
+        (valid_handle and h in seen_handles) or
+        (valid_email and email in seen_emails) or
+        (valid_phone and phone in seen_phones) or
+        (sc and sc in seen_store_city)
+    )
+
+    if is_dupe:
+        continue
+
+    clean_rows.append(row)
+    seen_ids.add(lid)
+    if valid_handle:
+        seen_handles.add(h)
+    if valid_email:
+        seen_emails.add(email)
+    if valid_phone:
+        seen_phones.add(phone)
+    if sc:
+        seen_store_city.add(sc)
+
+df = pd.DataFrame(clean_rows).reset_index(drop=True)
 after = len(df)
 print(f"  Removed {before - after} duplicates ({before} → {after} leads)")
-
-# Drop the sorting helper column
-df = df.drop(columns=['last_touch_date_sort'])
 
 
 # ============================================================
