@@ -700,20 +700,20 @@ def get_reply_type(row):
     # -------------------------------------------------------
     if reply_type in ['hot', 'warm']:
         try:
-            # Never upgrade Hold stage leads — they are on Hold for a reason
-            # "not interested right now" stays warm regardless of last_touch_date
-            # The date urgency only applies to genuinely interested leads
             current_stage = str(row.get('stage', '') or '').strip()
-            if current_stage == 'Hold':
-                pass  # Keep reply_type as is for Hold leads
-            else:
+            if current_stage != 'Hold':
                 last_touch = str(row.get('last_touch_date', '') or '').strip()
                 if last_touch and last_touch.lower() not in ['', 'nan', 'none']:
                     last_touch_date = pd.to_datetime(last_touch, dayfirst=True, errors='coerce')
                     if pd.notna(last_touch_date):
                         days_since = (pd.Timestamp.now() - last_touch_date).days
-                        if days_since > 7:
+                        # Only flag as overdue if date is in the past (days_since > 0)
+                        # AND more than 7 days ago
+                        # Future dates mean data entry error — ignore them
+                        if 7 < days_since < 730:  # between 7 days and 2 years
                             reply_type = 'hot'
+                # If no last_touch_date — do not change reply_type
+                # Missing date means we cannot determine urgency
         except:
             pass
 
