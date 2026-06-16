@@ -407,14 +407,26 @@ def classify_lead(row):
     has_followers = pd.notna(row['followers']) and str(row['followers']).strip() not in ['', '0', 'nan']
     has_velocity = pd.notna(row['sales_velocity_30d']) and str(row['sales_velocity_30d']).strip() not in ['', '0', 'nan']
     has_email = pd.notna(row['email']) and str(row['email']).strip() != '' and not str(row['email']).startswith('INVALID')
-    has_handle = pd.notna(row['handle']) and str(row['handle']).strip() != ''
+    has_handle = pd.notna(row['handle']) and str(row['handle']).strip() not in ['', 'nan']
+    has_city = pd.notna(row.get('city', '')) and str(row.get('city', '')).strip() not in ['', 'nan']
+    has_store = pd.notna(row.get('store_name', '')) and str(row.get('store_name', '')).strip() not in ['', 'nan']
 
+    # HYBRID: physical store WITH online following
+    # Has city/store name AND followers/velocity AND a handle
+    # Gets treated as a physical shop for visits
+    # AND surfaces in DM queue as secondary channel
+    # Higher priority than a standard shop — double the reach
+    if (has_city or has_store) and (has_followers or has_velocity) and has_handle:
+        return 'hybrid'
+
+    # Pure online reseller
     if has_followers or has_velocity:
         if has_email:
             return 'reseller_with_email'
         return 'reseller'
-    else:
-        return 'physical_shop'
+
+    # Physical shop only
+    return 'physical_shop'
 
 df['lead_type'] = df.apply(classify_lead, axis=1)
 
@@ -911,4 +923,7 @@ print(f"  Total leads: {len(df)}")
 print(f"  Resellers: {len(df[df['lead_type'] == 'reseller'])}")
 print(f"  Resellers with email: {len(df[df['lead_type'] == 'reseller_with_email'])}")
 print(f"  Physical shops: {len(df[df['lead_type'] == 'physical_shop'])}")
+print(f"  Hybrid (shop + online): {len(df[df['lead_type'] == 'hybrid'])}")
+if len(df[df['lead_type'] == 'hybrid']) > 0:
+    print(f"  Hybrid leads surface in BOTH shop sequencer AND DM queue")
 print(f"\nStep 1 complete. Ready for Step 2: Prioritisation.")
