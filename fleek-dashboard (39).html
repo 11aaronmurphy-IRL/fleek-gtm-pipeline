@@ -135,10 +135,10 @@
   <div id="tab-overview" class="tab-content active">
     <div id="upload-area" style="margin-top:24px;">
       <label class="upload-zone" id="upload-zone">
-        <input type="file" id="file-input" accept=".xlsx,.xls" onchange="handleFile(this)">
+        <input type="file" id="file-input" accept=".xlsx,.xls,.csv" onchange="handleFile(this)">
         <div class="upload-icon">📊</div>
-        <div class="upload-title">Upload your pipeline Excel file</div>
-        <div class="upload-sub">Fleek_-_Acquisition_Case_Study_-_Pipeline_Data.xlsx</div>
+        <div class="upload-title">Upload your pipeline file</div>
+        <div class="upload-sub">Excel (.xlsx) or CSV (pipeline_clean.csv after batch handler)</div>
         <div class="upload-sub" style="margin-top:8px;font-size:11px;color:#bbb;">Click to browse or drag and drop</div>
       </label>
       <div id="upload-progress" class="progress" style="display:none;">⏳ Processing your pipeline data...</div>
@@ -191,7 +191,7 @@
         <button class="fbtn" onclick="setFilter('s','uk',this)">🇬🇧 UK only</button>
         <button class="fbtn" onclick="setFilter('s','intl',this)">🌍 International</button>
         <button class="fbtn" onclick="setFilter('s','negotiating',this)">Negotiating</button>
-        <button class="fbtn" onclick="setFilter('s','visit',this)">Visit today</button>
+        <button class="fbtn" onclick="setFilter('s','visit',this)" title="Shows only confirmed appointments — tick the meeting confirmation box in Deal Pipeline first">📍 Visit today</button>
       </div>
       <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
         <span style="font-size:12px;color:#666;font-weight:600;">Filter by city:</span>
@@ -387,7 +387,16 @@ function classifyLead(row){
   const hasF=row.followers&&parseFloat(row.followers)>0;
   const hasV=row.sales_velocity_30d&&parseFloat(row.sales_velocity_30d)>0;
   const hasE=row.email&&String(row.email).trim()!=='';
-  if(hasF||hasV)return hasE?'reseller_with_email':'reseller';
+  const hasHandle=row.handle&&String(row.handle).trim()!=='';
+  const hasCity=row.city&&String(row.city).trim()!=='';
+  const hasStore=row.store_name&&String(row.store_name).trim()!=='';
+
+  // HYBRID: physical store with online following
+  // Has city/store AND followers/velocity AND a handle
+  // Appears in BOTH shop sequencer AND DM queue
+  if((hasCity||hasStore)&&(hasF||hasV)&&hasHandle) return 'hybrid';
+
+  if(hasF||hasV) return hasE?'reseller_with_email':'reseller';
   return 'physical_shop';
 }
 
@@ -574,15 +583,26 @@ function handleFile(input){
   document.getElementById('upload-progress').style.display='block';
   document.getElementById('upload-zone').style.display='none';
   const reader=new FileReader();
+  const isCSV=file.name.toLowerCase().endsWith('.csv');
+
   reader.onload=e=>{
     try{
-      const wb=XLSX.read(e.target.result,{type:'binary',cellDates:true});
-      const sheetNames=wb.SheetNames;
-      const pipelineName=sheetNames.find(n=>n.toLowerCase().includes('pipeline')&&!n.toLowerCase().includes('new')&&!n.toLowerCase().includes('drop'))||sheetNames[0];
-      const day2Name=sheetNames.find(n=>n.toLowerCase().includes('day')||n.toLowerCase().includes('drop')||n.toLowerCase().includes('new_drop'));
-      const rawLeads=XLSX.utils.sheet_to_json(wb.Sheets[pipelineName],{defval:''});
-      const rawDay2=day2Name?XLSX.utils.sheet_to_json(wb.Sheets[day2Name],{defval:''}):[];
-      processData(rawLeads,rawDay2);
+      if(isCSV){
+        // CSV upload — pipeline_clean.csv after batch_handler.py has run
+        // This includes all original leads plus any new batch additions
+        const wb=XLSX.read(e.target.result,{type:'binary'});
+        const rawLeads=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+        processData(rawLeads,[]);
+      } else {
+        // Excel upload — original pipeline file
+        const wb=XLSX.read(e.target.result,{type:'binary',cellDates:true});
+        const sheetNames=wb.SheetNames;
+        const pipelineName=sheetNames.find(n=>n.toLowerCase().includes('pipeline')&&!n.toLowerCase().includes('new')&&!n.toLowerCase().includes('drop'))||sheetNames[0];
+        const day2Name=sheetNames.find(n=>n.toLowerCase().includes('day')||n.toLowerCase().includes('drop')||n.toLowerCase().includes('new_drop'));
+        const rawLeads=XLSX.utils.sheet_to_json(wb.Sheets[pipelineName],{defval:''});
+        const rawDay2=day2Name?XLSX.utils.sheet_to_json(wb.Sheets[day2Name],{defval:''}):[];
+        processData(rawLeads,rawDay2);
+      }
     }catch(err){
       document.getElementById('upload-progress').textContent='Error reading file: '+err.message;
     }
@@ -711,8 +731,12 @@ function processData(rawLeads,rawDay2){
     else dupeCount++;
   });
 
-  const resellers=deduped.filter(l=>l.lead_type!=='physical_shop'&&!['Won','Lost'].includes(l.stage));
-  const shops=deduped.filter(l=>l.lead_type==='physical_shop');
+  // CHANNEL ALLOCATION
+  // DM queue: reseller and reseller_with_email ONLY
+  // Hybrid shops have email and address — no DM slot wasted on them
+  // Aaron's rule: 40 DM slots are for people you can ONLY reach via Instagram
+  const resellers=deduped.filter(l=>['reseller','reseller_with_email'].includes(l.lead_type)&&!['Won','Lost'].includes(l.stage));
+  const shops=deduped.filter(l=>['physical_shop','hybrid'].includes(l.lead_type));
   // INTENT-FIRST WHALE-SECOND DAILY PRIORITISATION
   // Step A: Hot and Warm replies fill top slots first (sorted by spend)
   // Step B: Fill remaining slots with Amber and New leads (by spend)
@@ -952,7 +976,7 @@ function renderResellers(){
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
             <div class="lead-name">@${r.handle}</div>
             <span class="badge ${bc(r)}">${bl(r)}</span>
-            ${r.lead_type==='reseller_with_email'?'<span class="badge b-new">Has email</span>':''}
+            ${r.lead_type==='reseller_with_email'?'<span class="badge b-new">Has email</span>':''}\n            ${r.lead_type==='hybrid'?'<span class="badge" style="background:#f0fdf4;color:#15803d;">🏪 Hybrid</span>':''}
             ${r.slot_type?`<span style="font-size:9px;color:#999;padding:2px 6px;background:#f5f5f5;border-radius:8px;">#${r.priority_rank} ${r.slot_type}</span>`:''}
           </div>
           <div class="lead-sub">${r.followers?r.followers.toLocaleString()+' followers':''} ${r.sales_velocity_30d?'· '+r.sales_velocity_30d+' sales/30d':''} ${r.est_monthly_spend_gbp?'· £'+r.est_monthly_spend_gbp.toLocaleString()+'/mo':''}</div>
@@ -1015,13 +1039,16 @@ function renderShops(){
     // Apply city filter first
     if(selectedCity && selectedCity!=='all' && s.city!==selectedCity) return false;
     const c=String(s.country||'').toUpperCase();
-    const c=String(s.country||'').toUpperCase();
     if(state.sFilter==='uk')return c==='UK';
     if(state.sFilter==='intl')return c!=='UK';
     if(state.sFilter==='negotiating')return s.stage==='Negotiating';
     if(state.sFilter==='visit'){
-      const isVisitStage=['Meeting Booked','Negotiating'].includes(s.stage)||(s.stage==='Replied'&&s.reply_type==='hot');
-      return c==='UK'&&isVisitStage;
+      // CONFIRMED VISITS ONLY
+      // A shop only appears here when the meeting has been explicitly confirmed
+      // Meeting Booked stage AND confirmation tickbox ticked in the Kanban
+      // Everything else is hidden — no cold leads, no warm leads, no noise
+      const isConfirmed = s.stage==='Meeting Booked' && s.meeting_confirmed===true;
+      return c==='UK' && isConfirmed;
     }
     return true;
   });
@@ -1033,7 +1060,10 @@ function renderShops(){
   });
   const cities=[...new Set(list.map(s=>s.city))];
   const sc=s=>{if(s.stage==='Negotiating')return 'b-hot';if(s.stage==='Meeting Booked')return 'b-new';if(s.stage==='Replied')return 'b-warm';return '';};
-  document.getElementById('shop-list').innerHTML=!cities.length?'<div class="empty">No shops match this filter.</div>':cities.map(city=>{
+  const emptyMsg = state.sFilter==='visit'
+    ? '<div style="padding:32px;text-align:center;"><div style="font-size:32px;margin-bottom:12px;">🔒</div><div style="font-weight:700;font-size:16px;color:#1a1a2e;margin-bottom:8px;">No confirmed visits today</div><div style="font-size:14px;color:#666;max-width:400px;margin:0 auto;line-height:1.6;">The Visit Today filter is empty until a shop owner confirms a time and is booked in the calendar.<br><br>Go to the <strong>Deal Pipeline</strong> tab, find your Meeting Booked leads and tick the confirmation box when a time is agreed. They will appear here automatically.</div></div>'
+    : '<div class="empty">No shops match this filter.</div>';
+  document.getElementById('shop-list').innerHTML=!cities.length?emptyMsg:cities.map(city=>{
     const cityShops=list.filter(s=>s.city===city);
     const isUK=String(cityShops[0].country||'').toUpperCase()==='UK';
     const neg=cityShops.filter(s=>s.stage==='Negotiating').length;
