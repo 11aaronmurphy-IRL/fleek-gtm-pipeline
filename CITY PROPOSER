@@ -1,0 +1,258 @@
+"""
+FLEEK PIPELINE — CITY PROPOSER (Step 5)
+=========================================
+Scans all physical shops in the pipeline and proposes the
+optimal city to visit next week based on pipeline density.
+
+Run after clean_pipeline.py:
+    /usr/local/bin/python3.10 city_proposer.py
+"""
+
+import pandas as pd
+import os
+from datetime import datetime, timedelta
+
+# ============================================================
+# LOAD CLEAN PIPELINE
+# ============================================================
+pipeline_file = 'pipeline_clean.csv'
+if not os.path.exists(pipeline_file):
+    print("Error: pipeline_clean.csv not found. Run clean_pipeline.py first.")
+    exit()
+
+df = pd.read_csv(pipeline_file, dtype=str)
+
+# ============================================================
+# STEP 1: DATA PREP AND CLEANING
+# ============================================================
+# Filter to physical shops only — excludes all resellers
+shops = df[df['lead_type'] == 'physical_shop'].copy()
+print(f"\nCity Proposer — Step 5")
+print(f"======================")
+print(f"Total physical shops in pipeline: {len(shops)}")
+
+# Clean city column — lowercase, strip spaces
+shops['city'] = shops['city'].str.strip().str.title()
+
+# Clean spend column
+shops['est_monthly_spend_gbp'] = pd.to_numeric(
+    shops['est_monthly_spend_gbp'].str.replace('£','').str.replace(',',''),
+    errors='coerce'
+).fillna(0)
+
+# Clean num_touches
+shops['num_touches'] = pd.to_numeric(shops['num_touches'], errors='coerce').fillna(0)
+
+# Filter out Hold, Lost, Won from scoring loop
+# These are excluded because:
+# Hold = not ready, respect the timing
+# Lost = hard no, never visit
+# Won = already a customer, separate account management visit
+EXCLUDE_STAGES = ['Hold', 'Lost', 'Won']
+scoreable = shops[~shops['stage'].isin(EXCLUDE_STAGES)].copy()
+
+# Filter to UK only — never visit international
+scoreable = scoreable[
+    scoreable['country'].str.strip().str.upper().isin(['UK', 'UNITED KINGDOM', '']) |
+    scoreable['country'].isna()
+]
+
+print(f"Scoreable shops (excl Hold/Lost/Won/International): {len(scoreable)}")
+
+# ============================================================
+# STEP 2: VISIT SCORE CALCULATION
+# ============================================================
+# Multipliers reflect commercial probability of closing:
+# Higher stage = higher chance of revenue = higher multiplier
+#
+# New leads split by spend:
+# £5k+  = cold visit justified (0.8x)
+# £2-5k = worth a drop-in if nearby (0.4x)
+# <£2k  = email only, no visit
+
+def get_visit_score(row):
+    stage = str(row.get('stage', '') or '').strip()
+    spend = float(row.get('est_monthly_spend_gbp', 0) or 0)
+    reply_type = str(row.get('reply_type', '') or '').strip().lower()
+
+    if stage == 'Meeting Booked':
+        return spend * 3.0
+    elif stage == 'Negotiating':
+        return spend * 2.5
+    elif stage == 'Replied':
+        if reply_type == 'hot':
+            return spend * 2.0
+        elif reply_type == 'warm':
+            return spend * 1.5
+        else:
+            return spend * 1.0
+    elif stage == 'Contacted':
+        return spend * 1.0
+    elif stage == 'New':
+        if spend >= 5000:
+            return spend * 0.8
+        elif spend >= 2000:
+            return spend * 0.4
+        else:
+            return 0
+    else:
+        return 0
+
+scoreable['visit_score'] = scoreable.apply(get_visit_score, axis=1)
+
+# Only keep shops that actually score > 0
+scoreable = scoreable[scoreable['visit_score'] > 0]
+
+# ============================================================
+# STEP 3: AGGREGATE BY CITY
+# ============================================================
+city_stats = []
+
+for city, group in scoreable.groupby('city'):
+    if not city or str(city).lower() in ['nan', '']:
+        continue
+
+    total_score = round(group['visit_score'].sum(), 0)
+    total_pipeline = round(group['est_monthly_spend_gbp'].sum(), 0)
+    total_shops = len(group)
+
+    city_stats.append({
+        'city': city,
+        'total_score': total_score,
+        'total_pipeline_gbp': total_pipeline,
+        'total_shops': total_shops,
+        'meeting_booked': len(group[group['stage'] == 'Meeting Booked']),
+        'negotiating': len(group[group['stage'] == 'Negotiating']),
+        'replied_hot': len(group[(group['stage'] == 'Replied') & (group['reply_type'] == 'hot')]),
+        'replied_warm': len(group[(group['stage'] == 'Replied') & (group['reply_type'] == 'warm')]),
+        'contacted': len(group[group['stage'] == 'Contacted']),
+        'new_shops': len(group[group['stage'] == 'New']),
+    })
+
+city_df = pd.DataFrame(city_stats).sort_values('total_score', ascending=False).reset_index(drop=True)
+
+# ============================================================
+# PRINT RANKED CITY TABLE
+# ============================================================
+print(f"\nRanked Cities by Visit Score")
+print(f"{'Rank':<5} {'City':<15} {'Score':<10} {'Pipeline':<14} {'Shops':<7} {'Mtg':<5} {'Neg':<5} {'Hot':<5} {'Warm':<6} {'Con':<5} {'New':<4}")
+print("-" * 85)
+
+for idx, row in city_df.iterrows():
+    print(f"{idx+1:<5} {row['city']:<15} {row['total_score']:<10,.0f} £{row['total_pipeline_gbp']:<12,.0f} {row['total_shops']:<7} {row['meeting_booked']:<5} {row['negotiating']:<5} {row['replied_hot']:<5} {row['replied_warm']:<6} {row['contacted']:<5} {row['new_shops']:<4}")
+
+# ============================================================
+# RECOMMENDATION STRING
+# ============================================================
+if len(city_df) == 0:
+    print("\nNo cities with scoreable shops found.")
+    exit()
+
+top = city_df.iloc[0]
+
+# Next Tuesday
+today = datetime.now()
+days_until_tuesday = (1 - today.weekday()) % 7
+if days_until_tuesday == 0:
+    days_until_tuesday = 7
+next_tuesday = today + timedelta(days=days_until_tuesday)
+next_tuesday_str = next_tuesday.strftime('%A %d %B %Y')
+
+recommendation = (
+    f"Visit {top['city']} on {next_tuesday_str}. "
+    f"£{top['total_pipeline_gbp']:,.0f} in pipeline value across {top['total_shops']} shops."
+)
+
+print(f"\n{'='*65}")
+print(f"RECOMMENDATION")
+print(f"{'='*65}")
+print(f"{recommendation}")
+print(f"{'='*65}")
+
+# ============================================================
+# ORDERED ITINERARY FOR TOP CITY
+# ============================================================
+# Stage priority order for visit sequence
+STAGE_PRIORITY = {
+    'Meeting Booked': 1,
+    'Negotiating': 2,
+    'Replied': 3,
+    'Contacted': 4,
+    'New': 5,
+}
+
+REPLY_PRIORITY = {
+    'hot': 1,
+    'warm': 2,
+    'amber': 3,
+    'new': 4,
+    'none': 5,
+}
+
+city_shops = scoreable[scoreable['city'] == top['city']].copy()
+city_shops['stage_order'] = city_shops['stage'].map(STAGE_PRIORITY).fillna(99)
+city_shops['reply_order'] = city_shops['reply_type'].map(REPLY_PRIORITY).fillna(99)
+city_shops = city_shops.sort_values(
+    ['stage_order', 'reply_order', 'est_monthly_spend_gbp'],
+    ascending=[True, True, False]
+).reset_index(drop=True)
+
+print(f"\nItinerary for {top['city']} — {next_tuesday_str}")
+print(f"{'#':<4} {'Store':<28} {'Stage':<18} {'Reply':<8} {'Spend':<12} Action")
+print("-" * 100)
+
+itinerary = []
+for i, (_, shop) in enumerate(city_shops.iterrows()):
+    stage = str(shop.get('stage', '') or '')
+    reply_type = str(shop.get('reply_type', '') or '')
+    spend = shop.get('est_monthly_spend_gbp', 0)
+    store = str(shop.get('store_name', '') or shop.get('handle', '') or 'Unknown')[:27]
+    email = str(shop.get('email', '') or '')
+    phone = str(shop.get('phone', '') or '')
+
+    if stage == 'Meeting Booked':
+        action = 'Confirmed visit — add to route'
+    elif stage == 'Negotiating':
+        action = 'Book visit — email first, visit to close'
+    elif stage == 'Replied' and reply_type == 'hot':
+        action = 'Book visit — hot reply, high intent'
+    elif stage == 'Replied' and reply_type == 'warm':
+        action = 'Book visit — handle objection face to face'
+    elif stage == 'Replied':
+        action = 'Book visit — warm lead, email to arrange'
+    elif stage == 'Contacted' and spend >= 5000:
+        action = f'Cold visit justified — £{int(spend):,}/mo'
+    elif stage == 'New' and spend >= 5000:
+        action = 'Email first — high value, visit after reply'
+    elif stage == 'New' and spend >= 2000:
+        action = 'Drop-in if nearby — mid value new lead'
+    else:
+        action = 'Email only'
+
+    print(f"{i+1:<4} {store:<28} {stage:<18} {reply_type:<8} £{spend:<10,.0f} {action}")
+
+    itinerary.append({
+        'visit_order': i + 1,
+        'store_name': store,
+        'city': top['city'],
+        'stage': stage,
+        'reply_type': reply_type,
+        'est_monthly_spend_gbp': spend,
+        'email': email if email != 'nan' else '',
+        'phone': phone if phone != 'nan' else '',
+        'action': action,
+        'visit_score': shop.get('visit_score', 0),
+        'notes': shop.get('notes', ''),
+        'last_inbound_text': shop.get('last_inbound_text', ''),
+    })
+
+# ============================================================
+# SAVE OUTPUTS
+# ============================================================
+city_df.to_csv('city_rankings.csv', index=False)
+pd.DataFrame(itinerary).to_csv('todays_visit_plan.csv', index=False)
+
+print(f"\n✓ City rankings saved to city_rankings.csv")
+print(f"✓ Visit plan saved to todays_visit_plan.csv")
+print(f"\n{recommendation}")
+print(f"\nStep 5 complete. Ready for Step 6: Post-outreach scaffolding.")
