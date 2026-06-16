@@ -173,8 +173,23 @@ print(f"  Loaded {len(df)} clean leads")
 # SPLIT INTO RESELLERS AND PHYSICAL SHOPS
 # ============================================================
 
+# HYBRID LEADS appear in BOTH channels
+# Primary: treated as physical shop for email/call/visit sequencing
+# Secondary: also surface in DM queue because they have an Instagram
+#            following that can be reached directly
+# Priority boost: hybrid shops score 1.3x higher than standard shops
+#                 in the city proposer because they have double the reach
+# CHANNEL ALLOCATION
+# DM queue: resellers only — people with NO physical address or email
+#           Hybrid shops are NOT in the DM queue
+#           They have email and an address so no DM slot wasted
+# Shop sequencer: physical shops AND hybrid shops
+#
+# Aaron's rule: the 40 DM slots are for people you can ONLY reach
+# via Instagram. The moment someone has an email or physical address
+# they come out of the DM queue entirely.
 resellers = df[df['lead_type'].isin(['reseller', 'reseller_with_email'])].copy()
-shops = df[df['lead_type'] == 'physical_shop'].copy()
+shops = df[df['lead_type'].isin(['physical_shop', 'hybrid'])].copy()
 
 print(f"  Resellers: {len(resellers)}")
 print(f"  Physical shops: {len(shops)}")
