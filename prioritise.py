@@ -614,6 +614,39 @@ shop_cols = [c for c in shop_cols if c in all_shops_sequenced.columns]
 todays_resellers[reseller_cols].to_csv('todays_resellers.csv', index=False)
 all_shops_sequenced[shop_cols].to_csv('todays_shops.csv', index=False)
 
+# ============================================================
+# VISITS TODAY — CONFIRMED APPOINTMENTS ONLY
+# ============================================================
+# This file starts empty every morning.
+# A shop only appears here when the owner has confirmed
+# a specific time and the rep has ticked the confirmation
+# box in the pipeline Kanban.
+#
+# The system requires a confirmed appointment before routing.
+# That is the difference between showing up randomly
+# and showing up to a meeting that is expected.
+# ============================================================
+confirmed_columns = shop_cols + ['appointment_confirmed']
+confirmed_columns = list(dict.fromkeys(confirmed_columns))
+visits_today = pd.DataFrame(columns=confirmed_columns)
+visits_today.to_csv('visits_today.csv', index=False)
+
+# Regional hubs — city cluster map for background field planning
+# Groups shops by city so the team can see pipeline density
+# WITHOUT scheduling visits until a time is confirmed
+city_clusters = shops.groupby('city').agg(
+    total_accounts=('lead_id', 'count'),
+    total_pipeline=('est_monthly_spend_gbp', 'sum'),
+    meeting_booked=('stage', lambda x: (x=='Meeting Booked').sum()),
+    replied=('stage', lambda x: (x=='Replied').sum()),
+    contacted=('stage', lambda x: (x=='Contacted').sum()),
+).reset_index()
+city_clusters['sequence_strategy'] = 'Static Hub — hold until appointment confirmed'
+city_clusters = city_clusters.sort_values('total_pipeline', ascending=False)
+city_clusters.to_csv('regional_hubs.csv', index=False)
+
 print(f"\n✓ Saved todays_resellers.csv — {len(todays_resellers)} resellers to DM today")
 print(f"✓ Saved todays_shops.csv — {len(all_shops_sequenced)} shops sequenced")
+print(f"✓ visits_today.csv created — 0 confirmed visits (awaiting owner confirmation)")
+print(f"✓ regional_hubs.csv created — {len(city_clusters)} city clusters for field planning")
 print(f"\nStep 2 complete. Ready for Step 3: Message drafting.")
