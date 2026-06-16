@@ -218,10 +218,99 @@ else:
 
 
 # ============================================================
-# STEP 7: REMOVE DUPLICATES
+# STEP 6b: GEOGRAPHIC DATA SANITISATION
 # ============================================================
-# Some leads appear more than once with different lead_IDs.
-# FIVE WAY DUPLICATE DETECTION
+# Some UK shops have US +1 phone codes due to data entry errors.
+# We detect and correct these using three signals:
+#
+# Rule 1: Email domain check
+#   .co.uk email = UK shop. Force country to UK.
+#   Assign city to London unless a known UK city is already set.
+#
+# Rule 2: Keyword override
+#   Shop name contains UK location keywords = UK shop.
+#   Force country and assign correct city from the keyword.
+#
+# Rule 3: Data flagging
+#   If country was forced to UK but phone still has +1,
+#   prepend a warning to the notes field so the rep knows
+#   to manually update the phone number.
+# ============================================================
+
+# Known UK city keywords mapped to their correct city name
+UK_CITY_KEYWORDS = {
+    'brick lane': 'London',
+    'camden': 'London',
+    'shoreditch': 'London',
+    'hackney': 'London',
+    'dalston': 'London',
+    'peckham': 'London',
+    'brixton': 'London',
+    'london': 'London',
+    'manchester': 'Manchester',
+    'leeds': 'Leeds',
+    'brighton': 'Brighton',
+    'bristol': 'Bristol',
+    'birmingham': 'Birmingham',
+    'liverpool': 'Liverpool',
+    'edinburgh': 'Edinburgh',
+    'glasgow': 'Glasgow',
+    'sheffield': 'Sheffield',
+    'nottingham': 'Nottingham',
+}
+
+# Known UK cities for Rule 1 — if already set, do not override
+KNOWN_UK_CITIES = set(UK_CITY_KEYWORDS.values())
+
+geo_fixes = 0
+
+for idx, row in df.iterrows():
+    original_country = str(row.get('country', '') or '').strip()
+    original_city = str(row.get('city', '') or '').strip()
+    email = str(row.get('email', '') or '').strip().lower()
+    store_name = str(row.get('store_name', '') or '').strip().lower()
+    phone = str(row.get('phone', '') or '').strip()
+    notes = str(row.get('notes', '') or '').strip()
+
+    forced_uk = False
+    assigned_city = original_city
+
+    # Rule 1: Email domain check
+    if email.endswith('.co.uk') and original_country.upper() not in ['UK', 'UNITED KINGDOM']:
+        forced_uk = True
+        df.at[idx, 'country'] = 'UK'
+        # Only assign London if no specific UK city is already set
+        if original_city.title() not in KNOWN_UK_CITIES:
+            assigned_city = 'London'
+            df.at[idx, 'city'] = 'London'
+
+    # Rule 2: Keyword override — check store name for UK location keywords
+    for keyword, city_name in UK_CITY_KEYWORDS.items():
+        if keyword in store_name:
+            df.at[idx, 'country'] = 'UK'
+            df.at[idx, 'city'] = city_name
+            assigned_city = city_name
+            if original_country.upper() not in ['UK', 'UNITED KINGDOM']:
+                forced_uk = True
+            break
+
+    # Rule 3: Flag phone mismatch
+    # If country was forced to UK but phone starts with +1 (US code)
+    phone_clean = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    if forced_uk and (phone_clean.startswith('+1') or phone_clean.startswith('001')):
+        warning = '[Data Error: Phone country code requires manual update]'
+        if notes and notes.lower() != 'nan':
+            df.at[idx, 'notes'] = f"{warning} {notes}"
+        else:
+            df.at[idx, 'notes'] = warning
+        geo_fixes += 1
+
+if geo_fixes > 0:
+    print(f"\n  Geographic sanitisation: {geo_fixes} leads had country forced to UK with US phone code flagged")
+else:
+    print(f"\n  Geographic sanitisation: no conflicts found")
+
+
 # ============================================================
 # Matches the dashboard JavaScript exactly.
 # Checks: lead_id, handle, email, phone, store+city
