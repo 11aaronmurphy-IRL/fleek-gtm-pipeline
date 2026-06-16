@@ -124,6 +124,7 @@
     <button class="tab" onclick="showTab('resellers')">Top 40 DMs</button>
     <button class="tab" onclick="showTab('shops')">Shop Sequencer</button>
     <button class="tab" onclick="showTab('batch')">Day 2 Batch</button>
+      <button class="tab" onclick="showTab('cities')">🗺 City Proposer</button>
     <button class="tab" onclick="showTab('kanban')">Deal Pipeline</button>
   </div>
 </div>
@@ -191,6 +192,12 @@
         <button class="fbtn" onclick="setFilter('s','intl',this)">🌍 International</button>
         <button class="fbtn" onclick="setFilter('s','negotiating',this)">Negotiating</button>
         <button class="fbtn" onclick="setFilter('s','visit',this)">Visit today</button>
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+        <span style="font-size:12px;color:#666;font-weight:600;">Filter by city:</span>
+        <select id="city-filter" onchange="renderShops()" style="font-size:12px;padding:4px 8px;border:1px solid #ddd;border-radius:6px;background:white;">
+          <option value="all">All cities</option>
+        </select>
       </div>
       <div class="section-label">SHOPS GROUPED BY CITY — SORTED BY STAGE PRIORITY AND COMMERCIAL VALUE</div>
       <div id="shop-list"></div>
@@ -590,6 +597,49 @@ function processData(rawLeads,rawDay2){
     const stage=reconcileStage(rawStage, row.last_inbound_text, row.num_touches, row.est_monthly_spend_gbp);
     const spend=cleanSpend(row.est_monthly_spend_gbp||0);
     const email=cleanEmail(row.email||'');
+
+    // GEOGRAPHIC SANITISATION
+    // Rule 1: .co.uk email = UK shop
+    // Rule 2: Store name contains UK location keyword = UK shop
+    // Rule 3: Flag phone mismatch
+    const UK_CITY_KEYWORDS = {
+      'brick lane':'London','camden':'London','shoreditch':'London',
+      'hackney':'London','dalston':'London','peckham':'London',
+      'brixton':'London','london':'London','manchester':'Manchester',
+      'leeds':'Leeds','brighton':'Brighton','bristol':'Bristol',
+      'birmingham':'Birmingham','liverpool':'Liverpool',
+      'edinburgh':'Edinburgh','glasgow':'Glasgow',
+    };
+    const KNOWN_UK_CITIES = new Set(Object.values(UK_CITY_KEYWORDS));
+    let rowCountry = String(row.country||'').trim();
+    let rowCity = String(row.city||'').trim();
+    const storeLower = String(row.store_name||'').toLowerCase();
+    const phonePre = String(row.phone||'').replace(/[\s\-()]/g,'');
+    let geoForced = false;
+
+    // Rule 1: email domain
+    if(email.endsWith('.co.uk') && !['UK','UNITED KINGDOM'].includes(rowCountry.toUpperCase())){
+      rowCountry = 'UK';
+      geoForced = true;
+      if(!KNOWN_UK_CITIES.has(rowCity)) rowCity = 'London';
+    }
+
+    // Rule 2: store name keyword
+    for(const [kw, city] of Object.entries(UK_CITY_KEYWORDS)){
+      if(storeLower.includes(kw)){
+        if(!['UK','UNITED KINGDOM'].includes(rowCountry.toUpperCase())) geoForced = true;
+        rowCountry = 'UK';
+        rowCity = city;
+        break;
+      }
+    }
+
+    // Rule 3: flag phone mismatch
+    let rowNotes = String(row.notes||'');
+    if(geoForced && (phonePre.startsWith('+1')||phonePre.startsWith('001'))){
+      const warning = '[Data Error: Phone country code requires manual update]';
+      rowNotes = rowNotes && rowNotes!=='nan' ? warning+' '+rowNotes : warning;
+    }
     const lt=classifyLead({followers:row.followers,sales_velocity_30d:row.sales_velocity_30d,email});
     // Every lead gets a reply type — no gaps, no exceptions
     // hot:   buying signal, act today
@@ -646,7 +696,7 @@ function processData(rawLeads,rawDay2){
       rt = (touches > 0 || hasNotes) ? 'amber' : 'new';
     }
     const ot=getObjType(row.last_inbound_text);
-    return{lead_id:String(row.lead_id||''),source:row.source||'',handle,store_name:row.store_name||'',contact_name:row.contact_name||'',email,phone:row.phone||'',city:row.city||'',country:row.country||'',followers:parseFloat(row.followers)||0,active_listings:parseFloat(row.active_listings)||0,avg_listing_price_gbp:parseFloat(row.avg_listing_price_gbp)||0,sales_velocity_30d:parseFloat(row.sales_velocity_30d)||0,est_monthly_spend_gbp:spend,stage,first_seen_date:row.first_seen_date||'',last_touch_date:row.last_touch_date||'',num_touches:parseInt(row.num_touches)||0,last_inbound_text:row.last_inbound_text||'',assigned_bdr:row.assigned_bdr||'',notes:row.notes||'',lead_type:lt,reply_type:rt,obj_type:ot,overdue:isOverdueLead};
+    return{lead_id:String(row.lead_id||''),source:row.source||'',handle,store_name:row.store_name||'',contact_name:row.contact_name||'',email,phone:row.phone||'',city:rowCity||row.city||'',country:rowCountry||row.country||'',followers:parseFloat(row.followers)||0,active_listings:parseFloat(row.active_listings)||0,avg_listing_price_gbp:parseFloat(row.avg_listing_price_gbp)||0,sales_velocity_30d:parseFloat(row.sales_velocity_30d)||0,est_monthly_spend_gbp:spend,stage,first_seen_date:row.first_seen_date||'',last_touch_date:row.last_touch_date||'',num_touches:parseInt(row.num_touches)||0,last_inbound_text:row.last_inbound_text||'',assigned_bdr:row.assigned_bdr||'',notes:rowNotes||row.notes||'',lead_type:lt,reply_type:rt,obj_type:ot,overdue:isOverdueLead};
   });
 
   const seen_ids=new Set(),seen_handles=new Set(),seen_emails=new Set(),seen_phones=new Set(),seen_store_city=new Set();
@@ -735,6 +785,49 @@ function processData(rawLeads,rawDay2){
   const day2=rawDay2.map(row=>{
     const handle=cleanHandle(row.handle||'');
     const email=cleanEmail(row.email||'');
+
+    // GEOGRAPHIC SANITISATION
+    // Rule 1: .co.uk email = UK shop
+    // Rule 2: Store name contains UK location keyword = UK shop
+    // Rule 3: Flag phone mismatch
+    const UK_CITY_KEYWORDS = {
+      'brick lane':'London','camden':'London','shoreditch':'London',
+      'hackney':'London','dalston':'London','peckham':'London',
+      'brixton':'London','london':'London','manchester':'Manchester',
+      'leeds':'Leeds','brighton':'Brighton','bristol':'Bristol',
+      'birmingham':'Birmingham','liverpool':'Liverpool',
+      'edinburgh':'Edinburgh','glasgow':'Glasgow',
+    };
+    const KNOWN_UK_CITIES = new Set(Object.values(UK_CITY_KEYWORDS));
+    let rowCountry = String(row.country||'').trim();
+    let rowCity = String(row.city||'').trim();
+    const storeLower = String(row.store_name||'').toLowerCase();
+    const phonePre = String(row.phone||'').replace(/[\s\-()]/g,'');
+    let geoForced = false;
+
+    // Rule 1: email domain
+    if(email.endsWith('.co.uk') && !['UK','UNITED KINGDOM'].includes(rowCountry.toUpperCase())){
+      rowCountry = 'UK';
+      geoForced = true;
+      if(!KNOWN_UK_CITIES.has(rowCity)) rowCity = 'London';
+    }
+
+    // Rule 2: store name keyword
+    for(const [kw, city] of Object.entries(UK_CITY_KEYWORDS)){
+      if(storeLower.includes(kw)){
+        if(!['UK','UNITED KINGDOM'].includes(rowCountry.toUpperCase())) geoForced = true;
+        rowCountry = 'UK';
+        rowCity = city;
+        break;
+      }
+    }
+
+    // Rule 3: flag phone mismatch
+    let rowNotes = String(row.notes||'');
+    if(geoForced && (phonePre.startsWith('+1')||phonePre.startsWith('001'))){
+      const warning = '[Data Error: Phone country code requires manual update]';
+      rowNotes = rowNotes && rowNotes!=='nan' ? warning+' '+rowNotes : warning;
+    }
     const ph=cleanPhone(row.phone||'');
     const sc=row.store_name&&row.city?String(row.store_name).toLowerCase()+'|'+String(row.city).toLowerCase():'';
     let isDupe=false,dupeReason='';
@@ -744,7 +837,7 @@ function processData(rawLeads,rawDay2){
     else if(ph&&seen_phones.has(ph)){isDupe=true;dupeReason=`phone number already in pipeline`;}
     else if(sc&&seen_store_city.has(sc)){isDupe=true;dupeReason=`store ${row.store_name} in ${row.city} already in pipeline`;}
     const lt=classifyLead({followers:row.followers,sales_velocity_30d:row.sales_velocity_30d,email});
-    return{lead_id:String(row.lead_id||''),handle,store_name:row.store_name||'',contact_name:row.contact_name||'',email,phone:row.phone||'',city:row.city||'',country:row.country||'',notes:row.notes||'',lead_type:lt,est_monthly_spend_gbp:cleanSpend(row.est_monthly_spend_gbp||0),isDupe,dupeReason};
+    return{lead_id:String(row.lead_id||''),handle,store_name:row.store_name||'',contact_name:row.contact_name||'',email,phone:row.phone||'',city:rowCity||row.city||'',country:rowCountry||row.country||'',notes:rowNotes||row.notes||'',lead_type:lt,est_monthly_spend_gbp:cleanSpend(row.est_monthly_spend_gbp||0),isDupe,dupeReason};
   });
 
   state={leads:deduped,resellers,shops,top40,dupes:day2.filter(l=>l.isDupe),newLeads:day2.filter(l=>!l.isDupe),rFilter:'all',sFilter:'all',expanded:{},dupeCount};
@@ -823,6 +916,7 @@ function renderAll(){
   renderResellers();
   renderShops();
   renderBatch();
+  renderCities();
 }
 
 function setFilter(type,val,btn){
@@ -891,19 +985,44 @@ function renderResellers(){
           <button class="expand-btn" onclick="toggle('${id}')">${exp?'Hide':'View DM'}</button>
         </div>
       </div>
-      ${exp?`<div class="msgbox">${r.drafted_dm}<br><br><button class="copy-btn" onclick="copyText(\`${r.drafted_dm.replace(/`/g,"'")}\`,this)">Copy</button></div>`:''}
+      ${exp?`<div class="msgbox">${r.drafted_dm}<br><br><button class="copy-btn" onclick="copyText(\`${r.drafted_dm.replace(/`/g,"'")}\`,this)">Copy</button> <a href=\"https://www.instagram.com/${r.handle}/\" target=\"_blank\" style=\"display:inline-flex;align-items:center;gap:5px;padding:5px 12px;background:#E1306C;color:white;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;\">&#x1F4F1; Open DM</a></div>`:''}
     </div>`;
   }).join('');
 }
 
 function renderShops(){
   if(!state.shops.length)return;
+
+  // Populate city dropdown on first render
+  const citySelect = document.getElementById('city-filter');
+  if(citySelect){
+    const allCities = [...new Set(state.shops
+      .filter(s=>String(s.country||'').toUpperCase()==='UK')
+      .map(s=>s.city).filter(Boolean).sort())];
+    const currentVal = citySelect.value;
+    if(citySelect.options.length <= 1){
+      allCities.forEach(c=>{
+        const opt = document.createElement('option');
+        opt.value = c; opt.textContent = c;
+        citySelect.appendChild(opt);
+      });
+    }
+  }
+
+  const selectedCity = citySelect ? citySelect.value : 'all';
+
   let list=state.shops.filter(s=>{
+    // Apply city filter first
+    if(selectedCity && selectedCity!=='all' && s.city!==selectedCity) return false;
+    const c=String(s.country||'').toUpperCase();
     const c=String(s.country||'').toUpperCase();
     if(state.sFilter==='uk')return c==='UK';
     if(state.sFilter==='intl')return c!=='UK';
     if(state.sFilter==='negotiating')return s.stage==='Negotiating';
-    if(state.sFilter==='visit')return c==='UK'&&['Negotiating','Meeting Booked','Replied'].includes(s.stage);
+    if(state.sFilter==='visit'){
+      const isVisitStage=['Meeting Booked','Negotiating'].includes(s.stage)||(s.stage==='Replied'&&s.reply_type==='hot');
+      return c==='UK'&&isVisitStage;
+    }
     return true;
   });
   list.sort((a,b)=>{
@@ -938,7 +1057,7 @@ function renderShops(){
             <button class="expand-btn" onclick="toggle('${id}')">${exp?'Hide':'Action + Email'}</button>
           </div>
         </div>
-        ${exp?`<div class="msgbox"><strong>Next action: ${s.action}</strong>\n\n${s.drafted_email}<br><br><button class="copy-btn" onclick="copyText(\`${s.drafted_email.replace(/`/g,"'")}\`,this)">Copy email</button></div>`:''}
+        ${exp?`<div class="msgbox"><strong>Next action: ${s.action}</strong>\n\n${s.drafted_email}<br><br><button class="copy-btn" onclick="copyText(\`${s.drafted_email.replace(/`/g,"'")}\`,this)">Copy email</button> <a href=\"mailto:${s.email}\" style=\"display:inline-flex;align-items:center;gap:5px;padding:5px 12px;background:#457b9d;color:white;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;\">&#x2709; Open in Email</a></div>`:''}
       </div>`;
     }).join('')}`;
   }).join('');
@@ -973,6 +1092,7 @@ function showTab(tab){
   document.getElementById('tab-'+tab).classList.add('active');
   document.querySelectorAll('.tab').forEach((b,i)=>{b.classList.toggle('active',['overview','resellers','shops','batch','kanban'][i]===tab);});
   if(tab==='kanban') renderKanban();
+  if(tab==='cities') renderCities();
 }
 
 const KANBAN_STAGES=[
@@ -1091,6 +1211,217 @@ function dropCard(event,newStage){
   draggedCard=null;
   renderKanban();
 }
+function getCityData(leads){
+  const EXCLUDE = ['Hold','Lost','Won'];
+  const shops = leads.filter(l=>l.lead_type==='physical_shop' && !EXCLUDE.includes(l.stage));
+
+  const scoreShop = s => {
+    const spend = s.est_monthly_spend_gbp||0;
+    const rt = (s.reply_type||'').toLowerCase();
+    if(s.stage==='Meeting Booked') return spend*3.0;
+    if(s.stage==='Negotiating') return spend*2.5;
+    if(s.stage==='Replied' && rt==='hot') return spend*2.0;
+    if(s.stage==='Replied' && rt==='warm') return spend*1.5;
+    if(s.stage==='Replied') return spend*1.0;
+    if(s.stage==='Contacted') return spend*1.0;
+    if(s.stage==='New' && spend>=5000) return spend*0.8;
+    if(s.stage==='New' && spend>=2000) return spend*0.4;
+    return 0;
+  };
+
+  const cityMap = {};
+  shops.forEach(s => {
+    const city = (s.city||'Unknown').trim();
+    const score = scoreShop(s);
+    if(score===0) return;
+    if(!cityMap[city]) cityMap[city]={city,score:0,pipeline:0,shops:[],mtg:0,neg:0,hot:0,warm:0,con:0,newShops:0};
+    cityMap[city].score += score;
+    cityMap[city].pipeline += s.est_monthly_spend_gbp||0;
+    cityMap[city].shops.push({...s, visit_score: score});
+    if(s.stage==='Meeting Booked') cityMap[city].mtg++;
+    else if(s.stage==='Negotiating') cityMap[city].neg++;
+    else if(s.stage==='Replied'&&s.reply_type==='hot') cityMap[city].hot++;
+    else if(s.stage==='Replied'&&s.reply_type==='warm') cityMap[city].warm++;
+    else if(s.stage==='Contacted') cityMap[city].con++;
+    else if(s.stage==='New') cityMap[city].newShops++;
+  });
+
+  return Object.values(cityMap).sort((a,b)=>b.score-a.score);
+}
+
+function getNextTuesday(){
+  const d = new Date();
+  const day = d.getDay();
+  const daysUntil = day===2 ? 7 : (2-day+7)%7||7;
+  d.setDate(d.getDate()+daysUntil);
+  return d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+}
+
+function getVisitAction(shop){
+  const stage = shop.stage||'';
+  const rt = (shop.reply_type||'').toLowerCase();
+  const spend = shop.est_monthly_spend_gbp||0;
+  if(stage==='Meeting Booked') return 'Confirmed visit — add to route';
+  if(stage==='Negotiating') return 'Book visit — email first, visit to close';
+  if(stage==='Replied'&&rt==='hot') return 'Book visit — hot reply, high intent';
+  if(stage==='Replied'&&rt==='warm') return 'Book visit — handle objection face to face';
+  if(stage==='Replied') return 'Book visit — email to arrange';
+  if(stage==='Contacted'&&spend>=5000) return `Cold visit justified — £${Math.round(spend).toLocaleString()}/mo`;
+  if(stage==='New'&&spend>=5000) return 'Email first — visit after reply';
+  if(stage==='New'&&spend>=2000) return 'Drop-in if nearby';
+  return 'Email only';
+}
+
+function renderCities(){
+  const cities = getCityData(state.leads);
+  if(!cities.length){
+    document.getElementById('city-proposer-content').innerHTML='<p style="color:#999;padding:20px;">No scoreable city data found.</p>';
+    return;
+  }
+
+  const top = cities[0];
+  const nextTue = getNextTuesday();
+  const recommendation = `Visit <strong>${top.city}</strong> on ${nextTue}. <strong>£${Math.round(top.pipeline).toLocaleString()}</strong> in pipeline value across <strong>${top.shops.length} shops</strong>.`;
+
+  // Sort itinerary by stage priority then spend
+  const STAGE_P = {'Meeting Booked':1,'Negotiating':2,'Replied':3,'Contacted':4,'New':5};
+  const REPLY_P = {'hot':1,'warm':2,'amber':3,'new':4};
+  const itinerary = [...top.shops].sort((a,b)=>{
+    const sp = (STAGE_P[a.stage]||9)-(STAGE_P[b.stage]||9);
+    if(sp!==0) return sp;
+    const rp = (REPLY_P[a.reply_type]||9)-(REPLY_P[b.reply_type]||9);
+    if(rp!==0) return rp;
+    return (b.est_monthly_spend_gbp||0)-(a.est_monthly_spend_gbp||0);
+  });
+
+  const badgeColor = stage =>
+    stage==='Meeting Booked'?'#d1ecf1':
+    stage==='Negotiating'?'#d4edda':
+    stage==='Replied'?'#d4edda':
+    stage==='Contacted'?'#fff3cd':'#f8f9fa';
+
+  const badgeText = stage =>
+    stage==='Meeting Booked'?'#0c5460':
+    stage==='Negotiating'?'#155724':
+    stage==='Replied'?'#155724':
+    stage==='Contacted'?'#856404':'#495057';
+
+  document.getElementById('city-proposer-content').innerHTML = `
+    <div style="background:#1a1a2e;color:white;padding:20px;border-radius:12px;margin-bottom:24px;">
+      <div style="font-size:13px;color:#aaa;margin-bottom:8px;">WEEKLY RECOMMENDATION</div>
+      <div id="city-recommendation" style="font-size:18px;line-height:1.6;">${recommendation}</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px;">
+      ${cities.map((c,i)=>`
+        <div class="city-card" data-city="${c.city}"
+          style="background:${i===0?'#e63946':'white'};color:${i===0?'white':'#1a1a2e'};border:1px solid #dee2e6;border-radius:10px;padding:14px;cursor:pointer;transition:all 0.2s;"
+          onclick="selectCity('${c.city}')">
+          <div style="font-weight:700;font-size:15px;">${i===0?'🏆 ':''}#${i+1} ${c.city}</div>
+          <div style="font-size:12px;margin-top:6px;opacity:0.85;">Score: ${Math.round(c.score).toLocaleString()}</div>
+          <div style="font-size:12px;opacity:0.85;">£${Math.round(c.pipeline).toLocaleString()}/mo pipeline</div>
+          <div style="font-size:12px;opacity:0.85;">${c.shops.length} shops · ${c.mtg} confirmed</div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div id="city-itinerary-heading" style="font-weight:700;font-size:16px;margin-bottom:12px;">📍 Itinerary for ${top.city}</div>
+    <div id="city-itinerary">
+      ${itinerary.map((s,i)=>`
+        <div style="background:white;border:1px solid #dee2e6;border-radius:10px;padding:14px;margin-bottom:10px;display:grid;grid-template-columns:32px 1fr auto;gap:12px;align-items:center;">
+          <div style="font-weight:700;font-size:18px;color:#999;">${i+1}</div>
+          <div>
+            <div style="font-weight:700;font-size:14px;">${s.store_name||s.handle||'Unknown'}</div>
+            <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;align-items:center;">
+              <span style="font-size:11px;padding:2px 8px;border-radius:8px;background:${badgeColor(s.stage)};color:${badgeText(s.stage)};font-weight:600;">${s.stage}</span>
+              ${s.reply_type&&s.reply_type!=='none'?`<span style="font-size:11px;padding:2px 8px;border-radius:8px;background:#fef2f2;color:#dc2626;font-weight:600;">${s.reply_type}</span>`:''}
+              <span style="font-size:11px;color:#666;">£${Math.round(s.est_monthly_spend_gbp||0).toLocaleString()}/mo</span>
+            </div>
+            <div style="font-size:12px;color:#457b9d;margin-top:4px;font-weight:600;">${getVisitAction(s)}</div>
+            ${s.last_inbound_text&&s.last_inbound_text!=='nan'?`<div style="font-size:11px;color:#666;margin-top:4px;font-style:italic;">"${s.last_inbound_text}"</div>`:''}
+            ${s.email&&s.email!=='nan'?`<div style="font-size:11px;color:#666;margin-top:2px;">✉ ${s.email}</div>`:''}
+            ${s.phone&&s.phone!=='nan'?`<div style="font-size:11px;color:#666;margin-top:2px;">📞 ${s.phone}</div>`:''}
+          </div>
+          <div style="text-align:right;">
+            <div style="font-weight:700;font-size:16px;color:#1a1a2e;">£${Math.round(s.est_monthly_spend_gbp||0).toLocaleString()}</div>
+            <div style="font-size:10px;color:#999;">per month</div>
+            <div style="font-size:10px;color:#e63946;font-weight:600;">score: ${Math.round(s.visit_score).toLocaleString()}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function selectCity(cityName){
+  const cities = getCityData(state.leads);
+  const city = cities.find(c=>c.city===cityName);
+  if(!city) return;
+
+  const nextTue = getNextTuesday();
+
+  // Update recommendation banner
+  document.getElementById('city-recommendation').innerHTML =
+    `Visit <strong>${city.city}</strong> on ${nextTue}. <strong>£${Math.round(city.pipeline).toLocaleString()}</strong> in pipeline value across <strong>${city.shops.length} shops</strong>.`;
+
+  // Update itinerary heading
+  document.getElementById('city-itinerary-heading').textContent = '📍 Itinerary for ' + city.city;
+
+  // Highlight selected card, un-highlight others
+  document.querySelectorAll('.city-card').forEach(el=>{
+    const isActive = el.dataset.city === cityName;
+    el.style.background = isActive ? '#e63946' : 'white';
+    el.style.color = isActive ? 'white' : '#1a1a2e';
+  });
+
+  // Sort and render itinerary for selected city
+  const STAGE_P = {'Meeting Booked':1,'Negotiating':2,'Replied':3,'Contacted':4,'New':5};
+  const REPLY_P = {'hot':1,'warm':2,'amber':3,'new':4};
+  const itinerary = [...city.shops].sort((a,b)=>{
+    const sp = (STAGE_P[a.stage]||9)-(STAGE_P[b.stage]||9);
+    if(sp!==0) return sp;
+    const rp = (REPLY_P[a.reply_type]||9)-(REPLY_P[b.reply_type]||9);
+    if(rp!==0) return rp;
+    return (b.est_monthly_spend_gbp||0)-(a.est_monthly_spend_gbp||0);
+  });
+
+  const badgeColor = stage =>
+    stage==='Meeting Booked'?'#d1ecf1':stage==='Replied'?'#d4edda':stage==='Contacted'?'#fff3cd':'#f8f9fa';
+  const badgeText = stage =>
+    stage==='Meeting Booked'?'#0c5460':stage==='Replied'?'#155724':stage==='Contacted'?'#856404':'#495057';
+
+  document.getElementById('city-itinerary').innerHTML = itinerary.map((s,i)=>`
+    <div style="background:white;border:1px solid #dee2e6;border-radius:10px;padding:14px;margin-bottom:10px;display:grid;grid-template-columns:32px 1fr auto;gap:12px;align-items:center;">
+      <div style="font-weight:700;font-size:18px;color:#999;">${i+1}</div>
+      <div>
+        <div style="font-weight:700;font-size:14px;">${s.store_name||s.handle||'Unknown'}</div>
+        <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;align-items:center;">
+          <span style="font-size:11px;padding:2px 8px;border-radius:8px;background:${badgeColor(s.stage)};color:${badgeText(s.stage)};font-weight:600;">${s.stage}</span>
+          ${s.reply_type&&s.reply_type!=='none'?`<span style="font-size:11px;padding:2px 8px;border-radius:8px;background:#fef2f2;color:#dc2626;font-weight:600;">${s.reply_type}</span>`:''}
+          <span style="font-size:11px;color:#666;">£${Math.round(s.est_monthly_spend_gbp||0).toLocaleString()}/mo</span>
+        </div>
+        <div style="font-size:12px;color:#457b9d;margin-top:4px;font-weight:600;">${getVisitAction(s)}</div>
+        ${s.last_inbound_text&&s.last_inbound_text!=='nan'?`<div style="font-size:11px;color:#666;margin-top:4px;font-style:italic;">"${s.last_inbound_text}"</div>`:''}
+        ${s.email&&s.email!=='nan'?`<div style="font-size:11px;color:#666;margin-top:2px;">✉ ${s.email}</div>`:''}
+        ${s.phone&&s.phone!=='nan'?`<div style="font-size:11px;color:#666;margin-top:2px;">📞 ${s.phone}</div>`:''}
+      </div>
+      <div style="text-align:right;">
+        <div style="font-weight:700;font-size:16px;color:#1a1a2e;">£${Math.round(s.est_monthly_spend_gbp||0).toLocaleString()}</div>
+        <div style="font-size:10px;color:#999;">per month</div>
+        <div style="font-size:10px;color:#e63946;font-weight:600;">score: ${Math.round(s.visit_score).toLocaleString()}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Keep old name as alias for backward compat
+function renderCityItinerary(cityName){ selectCity(cityName); }
+
 </script>
+<div id="tab-cities" class="tab-content" style="margin-top:24px;">
+  <div id="city-proposer-content">
+    <p style="color:#999;padding:20px;">Upload the Excel file to see city recommendations.</p>
+  </div>
+</div>
 </body>
 </html>
