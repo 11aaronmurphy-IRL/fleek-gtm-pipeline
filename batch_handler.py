@@ -65,6 +65,7 @@ OUTPUT:
 
 import pandas as pd
 import re
+import os
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -363,20 +364,68 @@ def extract_personalisation(notes):
 
 new_df['personalisation_signals'] = new_df['notes'].apply(extract_personalisation)
 
-# Align columns and append to pipeline
-for col in existing.columns:
+# ============================================================
+# AUTOMATED PIPELINE LOOP — THE CORE FIX
+# ============================================================
+# Previously: batch_handler wrote to pipeline_with_day2.csv
+# which clean_pipeline.py never read. New leads were lost.
+#
+# Now:
+# 1. New leads appended to raw_master_pipeline.csv
+#    This is the permanent base database. Never overwritten,
+#    only appended to. Every lead ever seen lives here.
+#
+# 2. clean_pipeline.py reads from raw_master_pipeline.csv
+#    So tomorrow morning when the full pipeline runs,
+#    all new leads are included automatically.
+#
+# 3. Column safety: we align columns before appending so
+#    existing lead data (stage, notes, spend) is never lost.
+#    New columns from the batch get added, missing ones filled.
+# ============================================================
+
+MASTER_FILE = 'raw_master_pipeline.csv'
+
+# Load or create the master pipeline file
+if os.path.exists(MASTER_FILE):
+    master = pd.read_csv(MASTER_FILE, dtype=str)
+    print(f"\n  Master pipeline loaded: {len(master)} existing leads")
+else:
+    # First run — create master from the existing clean pipeline
+    master = existing.copy()
+    print(f"\n  First run — creating master pipeline from {len(master)} existing leads")
+
+# Align columns — preserve all existing columns, add any new ones
+all_columns = list(dict.fromkeys(list(master.columns) + list(new_df.columns)))
+for col in all_columns:
+    if col not in master.columns:
+        master[col] = ''
     if col not in new_df.columns:
         new_df[col] = ''
 
-new_df_aligned = new_df[existing.columns]
-updated_pipeline = pd.concat([existing, new_df_aligned], ignore_index=True)
+new_df_aligned = new_df[all_columns]
+master_aligned = master[all_columns]
+
+# Append new leads to master — never overwrite existing data
+updated_master = pd.concat([master_aligned, new_df_aligned], ignore_index=True)
+updated_master.to_csv(MASTER_FILE, index=False)
+
+# Also update pipeline_clean.csv so prioritise.py and draft_messages.py
+# pick up the new leads immediately in today's run
+for col in existing.columns:
+    if col not in new_df.columns:
+        new_df[col] = ''
+new_df_for_clean = new_df[existing.columns]
+updated_pipeline = pd.concat([existing, new_df_for_clean], ignore_index=True)
 updated_pipeline.to_csv('pipeline_clean.csv', index=False)
+
 new_df.to_csv('new_leads_today.csv', index=False)
 
 print(f"\nPipeline updated:")
-print(f"  Before: {len(existing)} leads")
+print(f"  Before: {len(existing)} leads in pipeline_clean.csv")
 print(f"  Added: {len(new_df)} new leads")
 print(f"  After: {len(updated_pipeline)} leads")
+print(f"  Master pipeline (raw_master_pipeline.csv): {len(updated_master)} total leads ever seen")
 
 type_counts = new_df['lead_type'].value_counts()
 for lead_type, count in type_counts.items():
@@ -385,8 +434,9 @@ for lead_type, count in type_counts.items():
 signals_found = len(new_df[new_df['personalisation_signals'] != ''])
 print(f"  Personalisation signals extracted: {signals_found} leads")
 
-print(f"\n✓ pipeline_clean.csv updated")
-print(f"✓ new_leads_today.csv saved — {len(new_df)} new leads")
+print(f"\n✓ raw_master_pipeline.csv updated — permanent base database")
+print(f"✓ pipeline_clean.csv updated — {len(updated_pipeline)} leads ready for tomorrow")
+print(f"✓ new_leads_today.csv saved — {len(new_df)} new leads added today")
 # Save duplicates log — nothing is ever silently dropped.
 # Aaron: flag it, explain why, then skip it.
 # The rep can see exactly what was found and why it was not added.
