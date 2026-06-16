@@ -14,6 +14,7 @@ OUTPUT:
 
 import pandas as pd
 import re
+import os
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -25,24 +26,27 @@ warnings.filterwarnings('ignore')
 # together into one combined list. This means the tool handles
 # both the original 265 leads and the fresh day-2 batch in one go.
 
-print("Reading Excel file...")
+print("Reading pipeline data...")
 
-pipeline = pd.read_excel(
-    "Fleek_-_Acquisition_Case_Study_-_Pipeline_Data.xlsx",
-    sheet_name="pipeline",
-    dtype=str  # Read everything as text first, we'll convert later
-)
+MASTER_FILE = 'raw_master_pipeline.csv'
+EXCEL_FILE = 'Fleek_-_Acquisition_Case_Study_-_Pipeline_Data.xlsx'
 
-# Day 2 leads are intentionally NOT read here.
-# They are handled separately by batch_handler.py which
-# checks for duplicates before adding them to the pipeline.
-# This means the batch handler can properly simulate
-# receiving new leads the next day without everything
-# already being in the pipeline.
+if os.path.exists(MASTER_FILE):
+    # Raw master exists — read from it so batch_handler additions are included
+    pipeline = pd.read_csv(MASTER_FILE, dtype=str)
+    print(f"  Loaded {len(pipeline)} leads from raw_master_pipeline.csv")
+    print(f"  (includes all original leads plus any batch additions)")
+else:
+    # First run — read from Excel and create the master file
+    pipeline = pd.read_excel(
+        EXCEL_FILE,
+        sheet_name="pipeline",
+        dtype=str
+    )
+    print(f"  Loaded {len(pipeline)} leads from Excel (first run)")
+    print(f"  raw_master_pipeline.csv will be created by batch_handler.py")
+
 df = pipeline.copy()
-
-print(f"  Loaded {len(df)} pipeline leads")
-print(f"  Note: day 2 leads handled separately by batch_handler.py")
 
 
 # ============================================================
