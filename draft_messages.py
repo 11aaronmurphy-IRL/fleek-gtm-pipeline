@@ -596,9 +596,11 @@ print(f"Total actions today:       {len(all_messages)}")
 print(f"\nBreakdown by urgency:")
 
 if 'reply_type' in reseller_df.columns:
+    meeting_confirmations = len(reseller_df[reseller_df['reply_type'] == 'meeting_confirmation'])
     hot = len(reseller_df[reseller_df['reply_type'] == 'hot'])
     warm = len(reseller_df[reseller_df['reply_type'] == 'warm'])
     new_leads = len(reseller_df[reseller_df['reply_type'] == 'none'])
+    print(f"  Meeting confirmations (lock in time, top priority): {meeting_confirmations}")
     print(f"  Hot replies (act now):     {hot}")
     print(f"  Warm replies (handle):     {warm}")
     print(f"  New leads (first contact): {new_leads}")
