@@ -178,6 +178,58 @@ def draft_message(lead, channel='dm'):
             'channel': channel
         }
 
+    # ---------------------------------------------------------
+    # MEETING BOOKED — lock in the exact time
+    # ---------------------------------------------------------
+    # A lead in Meeting Booked already agreed in principle to
+    # meet, for example "yeah available Thursday let's chat" or
+    # "can you do a call fri". This is NOT an objection to handle
+    # and NOT a question to answer, it is a logistics task: get
+    # the exact day and time confirmed and into the calendar.
+    #
+    # This is the single highest priority message of the day for
+    # Instagram-only leads with no email, since a confirmed
+    # meeting that never gets a locked time is a wasted close.
+    # ---------------------------------------------------------
+    if stage == 'Meeting Booked':
+        greeting_mb = f"Hey @{handle}" if channel == 'dm' else f"Hi {name}" if name else "Hi"
+        last_msg_lower = str(last_message).lower()
+
+        # They gave a specific day but no exact time yet
+        day_map = {
+            'monday': 'monday', 'mon': 'monday',
+            'tuesday': 'tuesday', 'tues': 'tuesday', 'tue': 'tuesday',
+            'wednesday': 'wednesday', 'wed': 'wednesday',
+            'thursday': 'thursday', 'thurs': 'thursday', 'thu': 'thursday',
+            'friday': 'friday', 'fri': 'friday',
+            'saturday': 'saturday', 'sat': 'saturday',
+            'sunday': 'sunday', 'sun': 'sunday',
+        }
+        day_mentioned = None
+        for short, full_day in day_map.items():
+            if short in last_msg_lower:
+                day_mentioned = full_day
+                break
+
+        if day_mentioned:
+            message = f"{greeting_mb}, brilliant, {day_mentioned.capitalize()} works well for me too. What time suits you best, morning or afternoon? I will lock it straight into the calendar."
+            return {'message': message,
+                    'next_action': f'Confirm exact time for {day_mentioned.capitalize()}, then tick meeting confirmed once locked in',
+                    'follow_up_date': 'today', 'channel': channel}
+
+        # They asked an open question like "when can we talk"
+        if 'when' in last_msg_lower or 'sounds good' in last_msg_lower:
+            message = f"{greeting_mb}, great. I am free Thursday at 2pm or Friday morning, whichever suits you better? Happy to work around your hours too."
+            return {'message': message,
+                    'next_action': 'Get exact day and time confirmed, then tick meeting confirmed',
+                    'follow_up_date': 'today', 'channel': channel}
+
+        # Generic fallback, still in Meeting Booked but message is vague
+        message = f"{greeting_mb}, looking forward to chatting. Does Thursday at 2pm or Friday morning work better for you? Once we have a time locked in I will get it in the calendar."
+        return {'message': message,
+                'next_action': 'Get exact day and time confirmed, then tick meeting confirmed',
+                'follow_up_date': 'today', 'channel': channel}
+
     # -------------------------------------------------------
     # CONTACT DATA CHECK, IF/ELSE for channel migration
     # -------------------------------------------------------
