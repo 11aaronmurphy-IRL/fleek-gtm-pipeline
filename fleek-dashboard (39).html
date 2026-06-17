@@ -941,6 +941,7 @@ function renderAll(){
   renderShops();
   renderBatch();
   renderCities();
+  renderKanban();
 }
 
 function setFilter(type,val,btn){
@@ -1120,7 +1121,7 @@ function renderBatch(){
 function showTab(tab){
   document.querySelectorAll('.tab-content').forEach(el=>el.classList.remove('active'));
   document.getElementById('tab-'+tab).classList.add('active');
-  document.querySelectorAll('.tab').forEach((b,i)=>{b.classList.toggle('active',['overview','resellers','shops','batch','kanban'][i]===tab);});
+  document.querySelectorAll('.tab').forEach((b,i)=>{b.classList.toggle('active',['overview','resellers','shops','batch','cities','kanban'][i]===tab);});
   if(tab==='kanban') renderKanban();
   if(tab==='cities') renderCities();
 }
@@ -1141,15 +1142,18 @@ let confirmedMeetings={};
 
 function renderKanban(){
   if(!state.leads.length)return;
-  // Build stage map from current state
-  if(!Object.keys(kanbanStages).length){
-    KANBAN_STAGES.forEach(s=>{kanbanStages[s.id]=[];});
-    state.leads.forEach(l=>{
-      const stage=l.stage||'New';
-      if(kanbanStages[stage])kanbanStages[stage].push(l);
-      else kanbanStages['New'].push(l);
-    });
-  }
+  // Always rebuild stage map fresh from current state.
+  // Previously this only rebuilt if kanbanStages was empty,
+  // which meant a second file upload kept showing stale data
+  // from the first upload. Now it rebuilds every single time
+  // renderKanban is called so the board always matches
+  // whatever is currently in state.leads.
+  KANBAN_STAGES.forEach(s=>{kanbanStages[s.id]=[];});
+  state.leads.forEach(l=>{
+    const stage=l.stage||'New';
+    if(kanbanStages[stage])kanbanStages[stage].push(l);
+    else kanbanStages['New'].push(l);
+  });
   document.getElementById('kanban-empty').style.display='none';
   document.getElementById('kanban-content').style.display='block';
   const board=document.getElementById('kanban-board');
