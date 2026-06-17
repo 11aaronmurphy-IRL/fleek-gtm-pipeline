@@ -32,10 +32,12 @@
   .lead-name{font-size:14px;font-weight:500;color:#111;}
   .lead-sub{font-size:11px;color:#888;margin-top:3px;}
   .score{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;flex-shrink:0;}
+  .s-meeting{background:#eff6ff;color:#2563eb;border:1.5px solid #2563eb;}
   .s-hot{background:#fef2f2;color:#dc2626;border:1.5px solid #dc2626;}
   .s-warm{background:#fffbeb;color:#d97706;border:1.5px solid #d97706;}
   .s-qual{background:#f9fafb;color:#6b7280;border:1.5px solid #d1d5db;}
   .badge{display:inline-block;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:500;margin-right:4px;}
+  .b-meeting{background:#eff6ff;color:#2563eb;font-weight:700;}
   .b-hot{background:#fef2f2;color:#dc2626;}
   .b-warm{background:#fffbeb;color:#d97706;}
   .b-new{background:#eff6ff;color:#2563eb;}
@@ -441,6 +443,28 @@ function draftDM(r){
   const hasContact=email && email!=='nan' && email.length>3;
   const hasPhone=phone && phone!=='nan' && phone.length>5;
 
+  // MEETING BOOKED — lock in the exact time
+  // A lead in Meeting Booked already agreed in principle to meet.
+  // This is NOT an objection to handle and NOT a question to
+  // answer, it is a logistics task: get the exact day and time
+  // confirmed. Mirrors the same logic built in draft_messages.py.
+  if(r.stage==='Meeting Booked'){
+    const dayMap={monday:'Monday',mon:'Monday',tuesday:'Tuesday',tues:'Tuesday',tue:'Tuesday',
+      wednesday:'Wednesday',wed:'Wednesday',thursday:'Thursday',thurs:'Thursday',thu:'Thursday',
+      friday:'Friday',fri:'Friday',saturday:'Saturday',sat:'Saturday',sunday:'Sunday',sun:'Sunday'};
+    let dayMentioned=null;
+    for(const [short,full] of Object.entries(dayMap)){
+      if(m.includes(short)){dayMentioned=full;break;}
+    }
+    if(dayMentioned){
+      return `Hey ${name}, brilliant, ${dayMentioned} works well for me too. What time suits you best, morning or afternoon? I'll lock it straight into the calendar.`;
+    }
+    if(m.includes('when')||m.includes('sounds good')){
+      return `Hey ${name}, great. I'm free Thursday at 2pm or Friday morning, whichever suits you better? Happy to work around your hours too.`;
+    }
+    return `Hey ${name}, looking forward to chatting. Does Thursday at 2pm or Friday morning work better for you? Once we have a time locked in I'll get it in the calendar.`;
+  }
+
   const migrationLine = hasContact ?
     `I'll get that sent straight over to ${email} now.` :
     hasPhone ?
@@ -508,6 +532,24 @@ function draftEmail(s){
   const city=s.city||'your city';
   const m=String(s.last_inbound_text||'').toLowerCase();
   const notes=String(s.notes||'').toLowerCase();
+
+  // MEETING BOOKED — lock in the exact time
+  // Same logic as the DM version, just sent via email since this
+  // shop has a valid email on file. Never competes for a DM slot.
+  if(s.stage==='Meeting Booked'){
+    const dayMap={monday:'Monday',mon:'Monday',tuesday:'Tuesday',tues:'Tuesday',tue:'Tuesday',
+      wednesday:'Wednesday',wed:'Wednesday',thursday:'Thursday',thurs:'Thursday',thu:'Thursday',
+      friday:'Friday',fri:'Friday',saturday:'Saturday',sat:'Saturday',sunday:'Sunday',sun:'Sunday'};
+    let dayMentioned=null;
+    for(const [short,full] of Object.entries(dayMap)){
+      if(m.includes(short)){dayMentioned=full;break;}
+    }
+    if(dayMentioned){
+      return `Subject: Confirming our chat\n\nHi ${name},\n\nBrilliant, ${dayMentioned} works well for me too. What time suits you best, morning or afternoon? I'll lock it straight into the calendar.\n\nAaron`;
+    }
+    return `Subject: Confirming our chat\n\nHi ${name},\n\nLooking forward to chatting. Does Thursday at 2pm or Friday morning work better for you? Once we have a time locked in I'll get it in the calendar.\n\nAaron`;
+  }
+
   if(m.includes('vinted')||m.includes('sell on'))return `Subject: Fleek is for sourcing, not selling\n\nHi ${name},\n\nGreat to hear you're on Vinted, Fleek is actually the other side of that. It's where you source the stock you sell on Vinted. Most of our stores use both.\n\nI'd love to show you how it works. I have time Thursday at 2pm or Friday morning, does either work?\n\nAaron`;
   if(m.includes('not taking')||m.includes('not interested'))return `Subject: No rush, here's the Fleek overview\n\nHi ${name},\n\nNo problem at all. I'll send over some info about Fleek so you have it when the time is right. I'll check back in with you in a few weeks.\n\nAaron`;
   if(m.includes('pricing')||m.includes('interested')||m.includes('send'))return `Subject: Fleek pricing for ${store}\n\nHi ${name},\n\nReally glad to hear it. I'd love to walk you through Fleek's pricing and show you the kind of stock we have coming through. I have time Thursday at 2pm or Friday morning, does either work?\n\nAaron`;
@@ -738,12 +780,28 @@ function processData(rawLeads,rawDay2){
   const resellers=deduped.filter(l=>['reseller','reseller_with_email'].includes(l.lead_type)&&!['Won','Lost'].includes(l.stage));
   const shops=deduped.filter(l=>['physical_shop','hybrid'].includes(l.lead_type));
   // INTENT-FIRST WHALE-SECOND DAILY PRIORITISATION
-  // Step A: Hot and Warm replies fill top slots first (sorted by spend)
-  // Step B: Fill remaining slots with Amber and New leads (by spend)
+  // Step Zero: Meeting Booked, handle only, no email — ABSOLUTE top priority
+  // Step A: Hot and Warm replies fill remaining slots (sorted by spend)
+  // Step B: Fill whatever's left with Amber and New leads (by spend)
   const DAILY_LIMIT = 40;
 
+  // STEP ZERO — MEETING CONFIRMATIONS NEEDED VIA DM
+  // A lead in Meeting Booked already agreed to meet. If they have
+  // no email at all (lead_type === 'reseller'), the confirmation
+  // message has to go via DM, and that is the single highest
+  // priority message of the day. This is not just interest like
+  // a Hot reply, it is an almost closed appointment stuck waiting
+  // purely on logistics. These take the top slots before anything
+  // else, even Hot replies.
+  const meetingConfirmations = resellers
+    .filter(r=>r.stage==='Meeting Booked' && r.lead_type==='reseller')
+    .sort((a,b)=>b.est_monthly_spend_gbp-a.est_monthly_spend_gbp)
+    .map(r=>({...r, reply_type:'meeting_confirmation'}));
+
+  const meetingConfirmedIds = new Set(meetingConfirmations.map(r=>r.lead_id));
+
   const hotReplies = resellers
-    .filter(r=>r.reply_type==='hot' && !['Won','Lost'].includes(r.stage))
+    .filter(r=>r.reply_type==='hot' && !['Won','Lost'].includes(r.stage) && !meetingConfirmedIds.has(r.lead_id))
     .sort((a,b)=>{
       // Overdue leads first, then by spend descending
       if(a.overdue&&!b.overdue) return -1;
@@ -752,10 +810,10 @@ function processData(rawLeads,rawDay2){
     });
 
   const warmReplies = resellers
-    .filter(r=>r.reply_type==='warm' && !['Won','Lost'].includes(r.stage))
+    .filter(r=>r.reply_type==='warm' && !['Won','Lost'].includes(r.stage) && !meetingConfirmedIds.has(r.lead_id))
     .sort((a,b)=>b.est_monthly_spend_gbp-a.est_monthly_spend_gbp);
 
-  const stepA = [...hotReplies, ...warmReplies];
+  const stepA = [...meetingConfirmations, ...hotReplies, ...warmReplies];
   const slotsRemaining = Math.max(0, DAILY_LIMIT - stepA.length);
 
   // STEP B: Commercial scoring for new and amber leads
@@ -798,7 +856,8 @@ function processData(rawLeads,rawDay2){
   top40.forEach((r,i)=>{
     r.priority_rank = i+1;
     r.priority_score = Math.round(scoreReseller(r));
-    r.slot_type = r.reply_type==='hot' ? 'Step A - Active (Hot)' :
+    r.slot_type = r.reply_type==='meeting_confirmation' ? 'Step Zero - MEETING CONFIRMATION (top priority)' :
+                  r.reply_type==='hot' ? 'Step A - Active (Hot)' :
                   r.reply_type==='warm' ? 'Step A - Active (Warm)' :
                   r.reply_type==='amber' ? 'Step B - Whale Filler (Amber)' :
                   'Step B - Whale Filler (New)';
@@ -904,10 +963,12 @@ function renderAll(){
   document.getElementById('shop-summary').innerHTML=`${phyShops.length} shops with email, phone and city.<br><br><strong>${ukShops.length} UK shops</strong> — email first, call, then visit in person grouped by city.<br><strong>${phyShops.length-ukShops.length} international</strong> — email and call only.`;
   document.getElementById('overview-content').style.display='block';
 
+  const meeting=top40.filter(r=>r.reply_type==='meeting_confirmation').length;
   const hot=top40.filter(r=>r.reply_type==='hot').length;
   const warm=top40.filter(r=>r.reply_type==='warm').length;
   document.getElementById('reseller-metrics').innerHTML=`
     <div class="metric"><div class="metric-num">${top40.length}</div><div class="metric-label">DMs today</div></div>
+    <div class="metric"><div class="metric-num" style="color:#2563eb;">${meeting}</div><div class="metric-label">📅 Lock in time</div></div>
     <div class="metric"><div class="metric-num red">${hot+warm}</div><div class="metric-label">Step A — Active convos</div></div>
     <div class="metric"><div class="metric-num red">${hot}</div><div class="metric-label">🔥 Hot replies</div></div>
     <div class="metric"><div class="metric-num amber">${warm}</div><div class="metric-label">Warm replies</div></div>
@@ -965,9 +1026,9 @@ function renderResellers(){
     const ms=!search||r.handle.toLowerCase().includes(search.toLowerCase())||String(r.last_inbound_text||'').toLowerCase().includes(search.toLowerCase());
     return mf&&ms;
   });
-  const sc=r=>r.reply_type==='hot'?'s-hot':r.reply_type==='warm'?'s-warm':'s-qual';
-  const bc=r=>r.reply_type==='hot'?'b-hot':r.reply_type==='warm'?'b-warm':r.reply_type==='amber'?'b-amber':r.reply_type==='new'?'b-new-lead':'b-new';
-  const bl=r=>r.reply_type==='hot'?'🔥 Hot reply':r.reply_type==='warm'?'Warm reply':r.reply_type==='amber'?'🟠 Not replied yet':r.reply_type==='new'?'🔵 Not contacted yet':'—';
+  const sc=r=>r.reply_type==='meeting_confirmation'?'s-meeting':r.reply_type==='hot'?'s-hot':r.reply_type==='warm'?'s-warm':'s-qual';
+  const bc=r=>r.reply_type==='meeting_confirmation'?'b-meeting':r.reply_type==='hot'?'b-hot':r.reply_type==='warm'?'b-warm':r.reply_type==='amber'?'b-amber':r.reply_type==='new'?'b-new-lead':'b-new';
+  const bl=r=>r.reply_type==='meeting_confirmation'?'📅 Lock in time':r.reply_type==='hot'?'🔥 Hot reply':r.reply_type==='warm'?'Warm reply':r.reply_type==='amber'?'🟠 Not replied yet':r.reply_type==='new'?'🔵 Not contacted yet':'—';
   document.getElementById('reseller-list').innerHTML=!list.length?'<div class="empty">No leads match this filter.</div>':list.map((r,i)=>{
     const id='r'+i;
     const exp=state.expanded[id];
@@ -1214,8 +1275,22 @@ function renderKanban(){
 }
 
 function toggleConfirmed(leadId, checked) {
+  // Update the tracker used by the Kanban card itself
   confirmedMeetings[leadId] = checked;
+
+  // ALSO update the actual lead object in state.leads
+  // so Visit Today and Shop Sequencer, which read directly
+  // from state.leads, see this confirmation too.
+  // Without this, ticking the box only updated the Kanban
+  // card visually but Visit Today never picked it up.
+  const lead = state.leads.find(l => l.lead_id === leadId);
+  if (lead) {
+    lead.meeting_confirmed = checked;
+  }
+
   renderKanban();
+  // Re-render anything else that depends on confirmed status
+  if (typeof renderShops === 'function') renderShops();
 }
 
 function dragCard(event,leadId){
