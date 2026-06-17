@@ -16,7 +16,18 @@ These are individual sellers on Instagram, Depop, Vinted, TikTok and eBay. They 
 **Channel 2 — Physical Shops (roughly 40% of the pipeline)**
 These are independent vintage stores with a registered address, an email, a phone number and a city. They can be emailed, called and visited in person. Unlike resellers there is no daily limit, so the tool sequences them by commercial priority and groups them by city so a rep can plan an efficient day of visits.
 
-The tool handles both channels automatically, applies different logic to each, and produces a single daily action list every morning.
+**Channel 3 — Hybrid (physical shop with an online following)**
+A shop can have both a registered address AND an active Instagram presence. These get treated as a physical shop for visits and emails — they already have a proper contact method, so they do not compete for one of the 40 limited DM slots. The classification simply recognises that double-reach exists, it does not change the contact priority.
+
+The tool determines lead type from the actual data in the row, not from any label a BDR typed in:
+```
+Has followers/velocity data AND city/store name AND a handle  → hybrid
+Has followers/velocity data only                               → reseller
+Has followers/velocity data AND an email                        → reseller_with_email
+Has city/store name, no follower or velocity data               → physical_shop
+```
+
+The tool handles all three categories automatically, applies different logic to each, and produces a single daily action list every morning.
 
 ---
 
@@ -54,7 +65,13 @@ Every message is drafted and ready. Read each one, tweak if needed, and send. In
 ```
 python3 batch_handler.py
 ```
-Run this before prioritise.py. It checks the new leads against everyone already in the pipeline, flags any duplicates, adds genuinely new leads, and updates pipeline_clean.csv. Then run prioritise.py and draft_messages.py as normal.
+Run this before prioritise.py. It checks the new leads against everyone already in the pipeline, flags any duplicates, adds genuinely new leads, and updates pipeline_clean.csv and the permanent raw_master_pipeline.csv base file. Then run prioritise.py and draft_messages.py as normal.
+
+**Step 5: Decide where to visit next week**
+```
+python3 city_proposer.py
+```
+Reads pipeline_clean.csv. Scores every UK city by pipeline value and stage priority, recommends the single best city to visit this week, and produces the full visit order for every shop in that city. Outputs city_rankings.csv, todays_visit_plan.csv, regional_hubs.csv and visits_today.csv.
 
 ---
 
@@ -62,10 +79,11 @@ Run this before prioritise.py. It checks the new leads against everyone already 
 
 | File | What it does | Output |
 |------|-------------|--------|
-| clean_pipeline.py | Reads raw Excel, cleans everything, classifies lead types | pipeline_clean.csv |
-| prioritise.py | Scores resellers, picks top 40, sequences shops | todays_resellers.csv, todays_shops.csv |
-| draft_messages.py | Drafts personalised messages for every lead | todays_messages.csv |
-| batch_handler.py | Handles new lead batches, exhaustive duplicate checking | pipeline_clean.csv (updated), duplicates_flagged.csv |
+| clean_pipeline.py | Reads raw Excel, cleans everything, classifies lead types, applies geographic sanitisation | pipeline_clean.csv |
+| prioritise.py | Scores resellers, picks top 40 with meeting confirmations first, sequences shops | todays_resellers.csv, todays_shops.csv |
+| draft_messages.py | Drafts personalised messages for every lead, including time-locking messages for Meeting Booked | todays_messages.csv |
+| batch_handler.py | Handles new lead batches, exhaustive duplicate checking | raw_master_pipeline.csv, pipeline_clean.csv (updated), duplicates_flagged.csv |
+| city_proposer.py | Scores UK cities by pipeline value, recommends weekly visit city and order | city_rankings.csv, todays_visit_plan.csv, visits_today.csv |
 
 ---
 
@@ -76,31 +94,43 @@ RAW EXCEL FILE (messy: 265 leads across pipeline tab)
       |
       v
 clean_pipeline.py
-  - Reads pipeline tab ONLY (day 2 handled separately)
+  - Reads from raw_master_pipeline.csv if it exists, otherwise the Excel pipeline tab
   - Normalises handles: @SepiaCollective → sepiacollective
   - Standardises stages: "contaced", "Contacted", "contacted" → Contacted
   - Fixes dates: Dec 29, 04/12/2025, 2025-12-29 → 2025-12-29
   - Cleans spend: £9,000 or "9000" or "£9000" → 9000.0
   - Flags broken emails: ines@@hotmail.com → INVALID: flagged, not deleted
-  - Removes duplicates: 265 leads → 252 clean leads
+  - Geographic sanitisation: .co.uk email or UK city keyword in store
+    name forces country to UK, flags any remaining +1 phone mismatch
+  - Removes duplicates: five-way check, never silently dropped
+  - Stage reconciliation: last message always beats the stage label.
+    Lost only happens on a genuine hard no, or silence after enough
+    real attempts. Won is scrutinised the same way — a Won label with
+    no message, low touches and low spend moves to Hold instead of
+    being trusted blindly.
   - Classifies lead type based on actual data not the label:
-      has followers/velocity data = reseller
+      has followers/velocity + city/store + handle = hybrid
+      has followers/velocity data only = reseller
       has email + followers = reseller_with_email  
       has city/store name, no metrics = physical_shop
       |
       v
-pipeline_clean.csv (252 leads, clean, classified, ready)
+pipeline_clean.csv (clean, classified, ready)
       |
       |-----> prioritise.py
       |         RESELLERS:
+      |         - STEP ZERO: Meeting Booked leads with no email (handle
+      |           only) take absolute top priority, above even hot
+      |           replies. A confirmed meeting stuck waiting on a time
+      |           is more urgent than a fresh hot conversation.
       |         - Reads last message from each replied lead
-      |         - Classifies reply as hot / warm / cold
-      |         - Scores all 150+ resellers on 7 signals
+      |         - Classifies reply as hot / warm / amber / new
+      |         - Scores all active resellers on commercial signals
       |         - Picks top 40 for today's DMs
       |         - Remaining resellers wait for tomorrow
       |
-      |         PHYSICAL SHOPS:
-      |         - Sorts by stage priority (Negotiating first)
+      |         PHYSICAL SHOPS (and hybrid shops):
+      |         - Sorts by stage priority (Meeting Booked first)
       |         - Then by monthly spend within each stage
       |         - Groups by city for visit planning
       |         - UK shops: email → call → visit
@@ -109,10 +139,13 @@ pipeline_clean.csv (252 leads, clean, classified, ready)
       |-----> draft_messages.py
       |         - For each of today's 40 resellers:
       |           reads last message, applies commercial logic,
-      |           writes personalised Instagram DM
+      |           writes personalised Instagram DM. Meeting Booked
+      |           leads get a message focused on locking in the
+      |           exact day and time, not a generic reply.
       |         - For each shop:
       |           writes personalised email with subject line
-      |           and clear call to action
+      |           and clear call to action. Same time-locking
+      |           logic applies for Meeting Booked shops.
       |         - Outputs one unified daily action list
       |
 NEW LEADS (day 2 batch arrives)
@@ -121,8 +154,19 @@ NEW LEADS (day 2 batch arrives)
 batch_handler.py
   - Checks 5 ways for duplicates (see Duplicate Detection below)
   - Flags duplicates to duplicates_flagged.csv with exact reason
-  - Adds 28 genuinely new leads to pipeline_clean.csv
+  - Adds genuinely new leads to raw_master_pipeline.csv (the
+    permanent base, appended to, never overwritten)
+  - Updates pipeline_clean.csv so today's run includes them
   - Run prioritise.py and draft_messages.py again for updated list
+      |
+      v
+city_proposer.py
+  - Scores every UK city: confirmed meetings ×3.0, Negotiating ×2.5,
+    Replied Hot ×2.0, Replied Warm ×1.5, Contacted ×1.0, New £5k+ ×0.8
+  - Recommends the single highest-value city to visit this week
+  - Produces the full visit order for every shop in that city
+  - visits_today.csv starts empty every morning — only fills once a
+    rep manually confirms a specific appointment time
 ```
 
 ---
@@ -131,7 +175,13 @@ batch_handler.py
 
 With only 40 DMs available per day from 150+ active resellers, the tool cannot just message everyone. It needs to decide who gets a DM today and who waits until tomorrow.
 
-The way it does this is by giving every reseller a priority score out of 130. The 40 resellers with the highest scores get a DM today. Everyone else waits.
+**Step Zero comes before any scoring at all.**
+
+Any reseller in Meeting Booked with no email on file — meaning the only way to reach them is Instagram — takes the absolute top slots, above even hot replies. This is not just interest, it is an almost closed appointment stuck waiting purely on logistics. Locking in the exact day and time matters more than starting a fresh hot conversation, so these go out first regardless of spend.
+
+If a Meeting Booked lead does have an email, the confirmation goes by email instead and never touches the 40 DM limit at all — it is handled entirely on the shop sequencer side.
+
+After Step Zero, everyone remaining is given a priority score out of 130. The 40 resellers with the highest scores (after Step Zero slots are filled) get a DM today. Everyone else waits.
 
 The score is built from seven signals. Each signal comes from a specific column in the pipeline data. Here is exactly what each signal is, where it comes from, and why it matters:
 
@@ -430,6 +480,12 @@ The first version of the batch handler silently skipped duplicates. I changed th
 **Spotted that Step 1 was incorrectly combining both Excel tabs.**
 During testing I noticed the batch handler was reporting all 30 day-2 leads as already in the pipeline. I investigated and found that Step 1 was reading both tabs and combining them, which meant by the time the batch handler ran there was nothing new to find. I redesigned Step 1 to only read the pipeline tab and leave the day-2 tab exclusively for the batch handler. This is the correct architecture — day 1 you process the pipeline, day 2 new leads arrive and get checked properly.
 
+**Found the same blind-trust problem in Won that I'd already found in Lost.**
+After fixing the Lost reconciliation I went looking for the same pattern elsewhere and found it. One lead, marked Won, had six touches, no message at all, and only £160 a month in spend. That is not a closed deal — that is someone who gave up labelling it properly. I applied the same evidence-based logic Lost already had: a Won label with no message and weak commercial signal (under £1,000 spend or fewer than 2 touches) gets moved to Hold for a genuine follow up instead of being trusted blindly.
+
+**Built a Step Zero priority above the existing hot/warm/cold scoring.**
+While reviewing the daily DM queue I realised the existing logic treated a confirmed meeting the same as any other hot reply. That undervalues it — someone who has already agreed to meet but only has an Instagram handle on file is one message away from a locked appointment, which is more urgent than a fresh hot conversation. I introduced Step Zero so these jump to the very top of the 40 slots, and made sure anyone with an email instead gets the same priority handled through the shop sequencer's email channel, so it never wastes a DM slot unnecessarily.
+
 **Pushed back on the duplicate checking being ID-only.**
 The first duplicate check only looked at lead_id. I identified four other ways a duplicate could appear — same handle in a different format, same email with a typo, same phone number formatted differently, same store in the same city entered by a different BDR. I insisted on checking all five. This is what caught L0295 @heritagefinds as a duplicate of L0130 — different lead IDs, same person. An ID-only check would have missed it entirely.
 
@@ -441,11 +497,21 @@ I brought the commercial judgment. Claude brought the implementation speed. Neit
 ## Files In This Repo
 
 ```
-clean_pipeline.py      Step 1: Data cleaning and lead classification
-prioritise.py          Step 2: Scoring, top 40 selection, shop sequencing
-draft_messages.py      Step 3: Personalised message drafting via Claude API
-batch_handler.py       Step 4: New batch handling and duplicate detection
-README.md              This file
+clean_pipeline.py      Step 1: Data cleaning, geographic sanitisation, lead classification, stage reconciliation
+prioritise.py           Step 2: Step Zero meeting confirmations, scoring, top 40 selection, shop sequencing
+draft_messages.py       Step 3: Personalised message drafting via Claude API, including time-locking messages
+batch_handler.py        Step 4: New batch handling, duplicate detection, permanent base pipeline updates
+city_proposer.py        Step 5: City scoring, weekly visit recommendation, visit order
+README.md               This file
+```
+
+**Files generated by the scripts (not in repo, created on first run):**
+```
+raw_master_pipeline.csv   The permanent base. Every lead ever seen lives here, appended to,
+                          never overwritten. clean_pipeline.py reads from this once it exists.
+pipeline_clean.csv        Today's cleaned, classified, reconciled pipeline.
+visits_today.csv          Starts empty every morning. Only fills once a rep manually confirms
+                          a specific appointment time in the Kanban.
 ```
 
 **Input file (not in repo — bring your own):**
