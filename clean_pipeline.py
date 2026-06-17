@@ -751,11 +751,29 @@ def reconcile_stage(row):
             # BDR marked New but touches show we already contacted them
             return 'Contacted', True
 
-    # STEP 6: Won with no message = keep Won
-    # Won with follow up language = move to Replied
+    # STEP 6: Won — scrutinised the same way Lost is, not trusted blindly
+    # ============================================================
+    # A BDR can type "Won" into a spreadsheet with zero evidence in
+    # the conversation, exactly the same risk as a BDR typing "Lost"
+    # with no hard no. Static Gallery is the example: 6 touches,
+    # no last message, only £160/mo spend. That's not a closed deal,
+    # that's a stalled lead someone gave up labelling correctly.
+    #
+    # A genuine Won deal should show SOME evidence: either a closing
+    # message in the conversation, or enough touches and spend to be
+    # plausible. Low touches + low spend + no message = move it back
+    # to Hold for a real follow up rather than trusting the label.
+    # ============================================================
     if stage == 'Won':
         if not msg:
-            return 'Won', False
+            # No evidence in the conversation at all.
+            # Only trust Won if there's a real commercial footprint,
+            # meaningful spend and a reasonable number of touches,
+            # suggesting an actual relationship existed before the
+            # label was applied. Otherwise this is unverified.
+            if spend >= 1000 and num_touches >= 2:
+                return 'Won', False
+            return 'Hold', True
         follow_up = ['email', 'one-pager', 'send over', 'more info',
                     'details', 'pricing', 'price', 'how does', 'can you']
         if any(phrase in msg for phrase in follow_up):
@@ -897,7 +915,9 @@ if len(overridden) > 0:
     print(f"  {len(hot_recovered)} moved to Replied — had buying signals or open questions")
     print(f"  {len(hold_recovered)} moved to Hold — had unanswered messages, not hard nos")
     print(f"  Combined est. monthly spend recovered: £{overridden['est_monthly_spend_gbp'].sum():,.0f}")
-    print(f"  Note: includes Won leads marked closed before the deal was actually done")
+    print(f"  Note: Won is scrutinised the same way as Lost. A Won label with")
+    print(f"        no message, low touches and low spend gets moved to Hold,")
+    print(f"        since there's no real evidence the deal was actually closed.")
     for _, lead in overridden.iterrows():
         identifier = lead.get('handle') or lead.get('store_name') or lead.get('lead_id')
         last_msg = str(lead.get("last_inbound_text",""))[:60]
