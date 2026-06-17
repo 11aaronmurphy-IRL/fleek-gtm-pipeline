@@ -356,7 +356,16 @@ function reconcileStage(stage, lastMessage, numTouches, spend) {
   }
 
   // No message — use stage and other signals
-  if(stage === 'Won') return 'Won';
+  // WON IS SCRUTINISED THE SAME WAY AS LOST, NOT TRUSTED BLINDLY
+  // A BDR can type "Won" with zero evidence in the conversation,
+  // same risk as typing "Lost" with no hard no. Only trust Won
+  // if there's a real commercial footprint, meaningful spend and
+  // a reasonable number of touches. Otherwise move to Hold for
+  // a genuine follow up rather than trusting an unverified label.
+  if(stage === 'Won') {
+    if(spendVal >= 1000 && touches >= 2) return 'Won';
+    return 'Hold';
+  }
 
   // No message at all — stage label cannot be trusted
   // Use num_touches to determine true stage
