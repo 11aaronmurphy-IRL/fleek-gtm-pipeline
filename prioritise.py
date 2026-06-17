@@ -305,21 +305,52 @@ active_resellers['avg_listing_price_gbp'] = pd.to_numeric(
     active_resellers['avg_listing_price_gbp'], errors='coerce'
 ).fillna(0)
 
+# STEP ZERO: MEETING CONFIRMATIONS NEEDED VIA DM
+# ============================================================
+# A lead in Meeting Booked has already agreed to meet. If they
+# have an email, the confirmation goes by email and never touches
+# the 40 DM limit at all. But if they ONLY have an Instagram handle,
+# the confirmation message has to go via DM, and that DM is the
+# single highest priority message of the day.
+#
+# This is not just interest, like a Hot reply. This is an almost
+# closed appointment that is stuck waiting purely on logistics.
+# A confirmed meeting that never gets its time nailed down is a
+# wasted close. These go above even Hot replies in the queue.
+# ============================================================
+
+meeting_booked_no_email = active_resellers.loc[
+    (active_resellers['stage'] == 'Meeting Booked') &
+    (active_resellers['lead_type'] == 'reseller')  # no email on file
+].sort_values('est_monthly_spend_gbp', ascending=False).copy()
+
+meeting_booked_no_email['reply_type'] = 'meeting_confirmation'
+
+step_zero_count = len(meeting_booked_no_email)
+
+print(f"\nStep Zero — Meeting confirmations needed via DM:")
+print(f"  Meeting Booked, handle only, no email: {step_zero_count}")
+print(f"  These take the top {step_zero_count} slots before anything else")
+
 # STEP A: Active conversations — Hot and Warm replies
 # Sorted by spend descending within each group
+# Excludes anyone already pulled into Step Zero above
 hot_replies = active_resellers.loc[
-    active_resellers['reply_type'] == 'hot'
+    (active_resellers['reply_type'] == 'hot') &
+    (~active_resellers['lead_id'].isin(meeting_booked_no_email['lead_id']))
 ].sort_values('est_monthly_spend_gbp', ascending=False)
 
 warm_replies = active_resellers.loc[
-    active_resellers['reply_type'] == 'warm'
+    (active_resellers['reply_type'] == 'warm') &
+    (~active_resellers['lead_id'].isin(meeting_booked_no_email['lead_id']))
 ].sort_values('est_monthly_spend_gbp', ascending=False)
 
-active_conversations = pd.concat([hot_replies, warm_replies])
+active_conversations = pd.concat([meeting_booked_no_email, hot_replies, warm_replies])
 slots_used = len(active_conversations)
 slots_remaining = max(0, DAILY_DM_LIMIT - slots_used)
 
 print(f"\nStep A — Clear the desk:")
+print(f"  Step Zero meeting confirmations: {step_zero_count}")
 print(f"  Hot replies: {len(hot_replies)}")
 print(f"  Warm replies: {len(warm_replies)}")
 print(f"  Total active conversations: {slots_used}")
@@ -446,6 +477,7 @@ else:
 todays_resellers = todays_resellers.reset_index(drop=True)
 todays_resellers['priority_rank'] = todays_resellers.index + 1
 todays_resellers['slot_type'] = todays_resellers['reply_type'].map({
+    'meeting_confirmation': 'Step Zero — MEETING CONFIRMATION (handle only, top priority)',
     'hot': 'Step A — Active conversation (Hot)',
     'warm': 'Step A — Active conversation (Warm)',
     'amber': 'Step B — Whale filler (Amber)',
@@ -461,7 +493,9 @@ active_resellers['combined_revenue'] = (
 def explain_priority(row):
     rt = row.get('reply_type', '')
     spend = row.get('est_monthly_spend_gbp', 0)
-    if rt == 'hot':
+    if rt == 'meeting_confirmation':
+        return f"Step Zero — MEETING CONFIRMATION NEEDED | No email on file, handle only | £{int(spend):,}/mo | Lock in the exact time before anything else today"
+    elif rt == 'hot':
         return f"Step A — HOT REPLY | Last said: {str(row.get('last_inbound_text',''))[:50]} | £{int(spend):,}/mo"
     elif rt == 'warm':
         obj = row.get('objection_type', '')
@@ -482,6 +516,7 @@ def explain_priority(row):
 todays_resellers['why_today'] = todays_resellers.apply(explain_priority, axis=1)
 
 print(f"\nToday's 40 DMs:")
+print(f"  Step Zero — Meeting confirmations: {len(todays_resellers[todays_resellers['reply_type']=='meeting_confirmation'])}")
 print(f"  Step A — Hot replies: {len(todays_resellers[todays_resellers['reply_type']=='hot'])}")
 print(f"  Step A — Warm replies: {len(todays_resellers[todays_resellers['reply_type']=='warm'])}")
 print(f"  Step B — Amber filler: {len(todays_resellers[todays_resellers['reply_type']=='amber'])}")
