@@ -1056,7 +1056,7 @@ function renderResellers(){
           ${r.assigned_bdr?`<div class="signal-tag">BDR: ${r.assigned_bdr}</div>`:''}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-left:10px;max-width:160px;text-align:right;">
-          <div style="font-size:10px;font-weight:600;color:${r.reply_type==='hot'?'#dc2626':r.reply_type==='warm'?'#d97706':r.reply_type==='amber'?'#c2410c':'#1d4ed8'};">${(()=>{
+          <div style="font-size:10px;font-weight:600;color:${r.stage==='Meeting Booked'?'#2563eb':r.reply_type==='hot'?'#dc2626':r.reply_type==='warm'?'#d97706':r.reply_type==='amber'?'#c2410c':'#1d4ed8'};">${(()=>{
             const rt=r.reply_type;
             const spend=r.est_monthly_spend_gbp;
             const spendStr=spend?'£'+Math.round(spend).toLocaleString()+'/mo':'';
@@ -1072,6 +1072,14 @@ function renderResellers(){
             }
             const vel=r.sales_velocity_30d?Math.round(r.sales_velocity_30d)+' sales/mo':'';
             const touches=r.num_touches&&r.num_touches!=='0'?r.num_touches+' touches':'';
+            // STAGE TAKES PRIORITY OVER REPLY TYPE FOR THE LABEL
+            // A lead can have stage = Meeting Booked but no message
+            // text and zero recorded touches, which made reply_type
+            // fall back to 'new' and the card wrongly said "never
+            // contacted" right next to a confirmed meeting. Stage is
+            // the more trustworthy field here since it has already
+            // been through reconciliation, so check it first.
+            if(r.stage==='Meeting Booked') return '📅 meeting booked · '+spendStr+(touches?' · '+touches:'');
             if(rt==='hot') return spendStr+(r.overdue?' · <span style="color:#dc2626">⚠ '+daysStr+'</span>':daysStr&&daysStr!=='No contact date'?' · <span style="color:#16a34a">'+daysStr+'</span>':daysStr?' · <span style="color:#999">'+daysStr+'</span>':'');
             if(rt==='warm') return (r.obj_type&&r.obj_type!=='none'?r.obj_type.replace('_',' ')+' · ':'')+spendStr+' · <span style="color:'+daysColor+'">'+daysStr+'</span>';
             if(rt==='amber') return (touches?touches+' · ':'')+spendStr+' · <span style="color:#999">'+daysStr+'</span>';
