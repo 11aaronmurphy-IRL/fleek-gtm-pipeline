@@ -165,8 +165,13 @@ city_proposer.py
     Replied Hot ×2.0, Replied Warm ×1.5, Contacted ×1.0, New £5k+ ×0.8
   - Recommends the single highest-value city to visit this week
   - Produces the full visit order for every shop in that city
-  - visits_today.csv starts empty every morning — only fills once a
-    rep manually confirms a specific appointment time
+  - visits_today.csv starts empty every morning — a shop only
+    appears here once a rep has manually ticked the meeting
+    confirmation box in the Kanban after agreeing a specific
+    time. The system requires a confirmed appointment before
+    routing you to a shop, not just a warm reply or high spend.
+    That is the difference between showing up randomly and
+    showing up to a meeting that is actually expected.
 ```
 
 ---
@@ -261,6 +266,20 @@ The score scales proportionally. The tool divides the reseller's spend by the ma
 **Where it comes from:** The `followers` column. Total Instagram followers.
 
 **Why it matters:** Follower count is a proxy for the size of the operation. A reseller with 60,000 followers is running a serious business. They drop new stock regularly, have a loyal customer base that sells out quickly, and need a consistent supply. A reseller with 500 followers is likely casual. Follower count alone does not tell the full story — which is why combined revenue was added as Signal 6 — but it is a useful secondary indicator.
+
+**Signal: Stock turnover ratio**
+
+```
+turnover_ratio = sales_velocity_30d / active_listings
+```
+
+Active listings on their own are a weak signal. High listings with low velocity usually just means unsold stock sitting there, not a busy seller. High listings with high velocity means stock is genuinely flying. The ratio tells you which situation you are actually looking at, the raw listings count alone cannot.
+
+**7-day overdue rule:**
+
+Any reseller classified as a hot or warm reply who has not been contacted in over 7 days gets flagged as overdue and jumps to the very top of the queue, above non-overdue hot replies and above everything in Step B. A hot lead that asked "how does payout work" three weeks ago and never got a reply is not cooling off, it is a process failure. Someone dropped the ball. The tool surfaces it urgently rather than quietly deprioritising it.
+
+Hold leads are never upgraded by this rule. If someone said "not interested right now", that stays in Hold regardless of how much time has passed — the timing they asked for is respected, not overridden by a generic age check.
 
 **How it scores:**
 - 65,000 followers → 10 points
